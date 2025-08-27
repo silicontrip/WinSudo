@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <DisableImplicitTFMProjectReferences>true</DisableImplicitTFMProjectReferences>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="9.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\NativeMethods.cs" Link="NativeMethods.cs" />
+    <Compile Include="..\SudoProtocol.cs" Link="SudoProtocol.cs" />
+  </ItemGroup>
+
+</Project>
