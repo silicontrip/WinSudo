@@ -364,7 +364,6 @@ namespace net.ninebroadcast.engineering.sudo
             _commandPipe.WaitForPipeDrain();
             Console.WriteLine("Server: Error response sent and pipe drained.");
         }
-        }
 
         private bool IsTokenAdmin(IntPtr token)
         {
