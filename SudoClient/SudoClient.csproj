@@ -19,8 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\NativeMethods.cs" Link="NativeMethods.cs" />
-    <Compile Include="..\SudoProtocol.cs" Link="SudoProtocol.cs" />
+    <Compile Include="..\SudoService\NativeMethods.cs" Link="NativeMethods.cs" />
+    <Compile Include="..\SudoService\SudoProtocol.cs" Link="SudoProtocol.cs" />
   </ItemGroup>
 
 </Project>
