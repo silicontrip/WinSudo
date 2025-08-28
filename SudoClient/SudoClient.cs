@@ -34,16 +34,16 @@ namespace net.ninebroadcast.engineering.sudo
                 using (var commandPipe = new NamedPipeClientStream(".", CommandPipeName, PipeDirection.InOut, PipeOptions.None))
                 {
                     await commandPipe.ConnectAsync(5000);
-                    Console.WriteLine("Successfully connected to named pipe.");
+                    //Console.WriteLine("Successfully connected to named pipe.");
 
                     var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-                    Console.WriteLine("Client: Attempting to serialize request to pipe...");
+                    //Console.WriteLine("Client: Attempting to serialize request to pipe...");
                     await WriteMessageAsync(commandPipe, request, jsonOptions);
-                    Console.WriteLine("Client: Request serialized. Attempting to deserialize response from pipe...");
+                    //Console.WriteLine("Client: Request serialized. Attempting to deserialize response from pipe...");
 
                     var response = await ReadMessageAsync<SudoServerResponse>(commandPipe, jsonOptions);
-                    Console.WriteLine("Client: Response deserialized from pipe.");
+                    //Console.WriteLine("Client: Response deserialized from pipe.");
                     if (response == null)
                     {
                         Console.Error.WriteLine("Error: Received empty or invalid response from server.");
@@ -56,12 +56,12 @@ namespace net.ninebroadcast.engineering.sudo
                         string password = ReadPassword();
 
                         var authRequest = new SudoRequest { Password = password };
-                        Console.WriteLine("Client: Attempting to serialize authentication request to pipe...");
+                        //Console.WriteLine("Client: Attempting to serialize authentication request to pipe...");
                         await WriteMessageAsync(commandPipe, authRequest, jsonOptions);
-                        Console.WriteLine("Client: Authentication request serialized. Attempting to deserialize response from pipe...");
+                        //Console.WriteLine("Client: Authentication request serialized. Attempting to deserialize response from pipe...");
 
                         response = await ReadMessageAsync<SudoServerResponse>(commandPipe, jsonOptions);
-                        Console.WriteLine("Client: Authentication response deserialized from pipe.");
+                        //Console.WriteLine("Client: Authentication response deserialized from pipe.");
                         if (response == null)
                         {
                             Console.Error.WriteLine("Error: Received empty or invalid response from server after authentication attempt.");
@@ -117,17 +117,17 @@ namespace net.ninebroadcast.engineering.sudo
                 using (var stdoutPipe = new NamedPipeClientStream(".", successData.StdoutPipeName!, PipeDirection.In, PipeOptions.None))
                 using (var stderrPipe = new NamedPipeClientStream(".", successData.StderrPipeName!, PipeDirection.In, PipeOptions.None))
                 {
-                    Console.WriteLine($"Client: Connecting to stdin pipe '{successData.StdinPipeName}'...");
-                    Console.WriteLine($"Client: Connecting to stdout pipe '{successData.StdoutPipeName}'...");
-                    Console.WriteLine($"Client: Connecting to stderr pipe '{successData.StderrPipeName}'...");
+                    //Console.WriteLine($"Client: Connecting to stdin pipe '{successData.StdinPipeName}'...");
+                    //Console.WriteLine($"Client: Connecting to stdout pipe '{successData.StdoutPipeName}'...");
+                    //Console.WriteLine($"Client: Connecting to stderr pipe '{successData.StderrPipeName}'...");
                     await Task.WhenAll(
                         stdinPipe.ConnectAsync(5000),
                         stdoutPipe.ConnectAsync(5000),
                         stderrPipe.ConnectAsync(5000)
                     );
-                    Console.WriteLine("Client: All I/O pipes connected.");
+                    //Console.WriteLine("Client: All I/O pipes connected.");
 
-                    Console.WriteLine("Client: Starting CopyToAsync for stdin, stdout, stderr.");
+                    //Console.WriteLine("Client: Starting CopyToAsync for stdin, stdout, stderr.");
 
                     var stdinCancellationTokenSource = new CancellationTokenSource();
                     var stdinTask = Console.OpenStandardInput().CopyToAsync(stdinPipe, stdinCancellationTokenSource.Token);
@@ -135,16 +135,16 @@ namespace net.ninebroadcast.engineering.sudo
                     var stdoutTask = stdoutPipe.CopyToAsync(Console.OpenStandardOutput());
                     var stderrTask = stderrPipe.CopyToAsync(Console.OpenStandardError());
 
-                    Console.WriteLine("Client: Stdin CopyToAsync started.");
-                    Console.WriteLine("Client: Stdout CopyToAsync started.");
-                    Console.WriteLine("Client: Stderr CopyToAsync started.");
+                    //Console.WriteLine("Client: Stdin CopyToAsync started.");
+                    //Console.WriteLine("Client: Stdout CopyToAsync started.");
+                    //Console.WriteLine("Client: Stderr CopyToAsync started.");
 
                     // Create a task that completes when either stdout or stderr completes
                     var outputCompletionTask = Task.WhenAny(stdoutTask, stderrTask);
 
                     // Wait for output to complete, then cancel stdin task
                     await outputCompletionTask;
-                    Console.WriteLine("Client: Output stream completed. Cancelling stdin forwarding.");
+                    //Console.WriteLine("Client: Output stream completed. Cancelling stdin forwarding.");
                     stdinCancellationTokenSource.Cancel();
 
                     // Wait for all tasks to complete (stdinTask will complete due to cancellation)
@@ -154,16 +154,16 @@ namespace net.ninebroadcast.engineering.sudo
                     }
                     catch (OperationCanceledException)
                     {
-                        Console.WriteLine("Client: Stdin forwarding task was cancelled as expected.");
+                        Console.WriteLine("Client: closing connection.");
                     }
-                    Console.WriteLine("Client: All I/O CopyToAsync tasks completed.");
+                    //Console.WriteLine("Client: All I/O CopyToAsync tasks completed.");
                 }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Client I/O Error in HandleIoForwarding: {ex.Message}");
             }
-            Console.WriteLine("Client: Exiting HandleIoForwarding.");
+            //Console.WriteLine("Client: Exiting HandleIoForwarding.");
         }
 
         private static SudoRequest? ParseArguments(string[] args)
