@@ -59,9 +59,21 @@ namespace net.ninebroadcast.engineering.sudo
 
             // Start I/O forwarding tasks here.
             // These tasks will copy data between the NamedPipeServerStream (client side) and the anonymous pipe (child side).
-            _stdinForwardingTask = Task.Run(async () => await _stdinPipeServer.CopyToAsync(_childStdinStream));
-            _stdoutForwardingTask = Task.Run(async () => await _childStdoutStream.CopyToAsync(_stdoutPipeServer));
-            _stderrForwardingTask = Task.Run(async () => await _childStderrStream.CopyToAsync(_stderrPipeServer));
+            _stdinForwardingTask = Task.Run(async () => {
+                System.Diagnostics.Debug.WriteLine("SudoProcess: Stdin forwarding started.");
+                await _stdinPipeServer.CopyToAsync(_childStdinStream);
+                System.Diagnostics.Debug.WriteLine("SudoProcess: Stdin forwarding completed.");
+            });
+            _stdoutForwardingTask = Task.Run(async () => {
+                System.Diagnostics.Debug.WriteLine("SudoProcess: Stdout forwarding started.");
+                await _childStdoutStream.CopyToAsync(_stdoutPipeServer);
+                System.Diagnostics.Debug.WriteLine("SudoProcess: Stdout forwarding completed.");
+            });
+            _stderrForwardingTask = Task.Run(async () => {
+                System.Diagnostics.Debug.WriteLine("SudoProcess: Stderr forwarding started.");
+                await _childStderrStream.CopyToAsync(_stderrPipeServer);
+                System.Diagnostics.Debug.WriteLine("SudoProcess: Stderr forwarding completed.");
+            });
 
             // Monitor the helper process exit
             Process.EnableRaisingEvents = true;
@@ -82,6 +94,7 @@ namespace net.ninebroadcast.engineering.sudo
                     _stdoutPipeServer.WaitForConnectionAsync(),
                     _stderrPipeServer.WaitForConnectionAsync()
                 );
+                System.Diagnostics.Debug.WriteLine("SudoProcess: All pipes connected. I/O forwarding active.");
 
                 // The I/O forwarding tasks (_stdinForwardingTask, _stdoutForwardingTask, _stderrForwardingTask)
                 // are already started in the constructor. They will run until the streams close.

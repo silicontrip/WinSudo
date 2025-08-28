@@ -132,6 +132,10 @@ namespace net.ninebroadcast.engineering.sudo
                     var stdoutTask = stdoutPipe.CopyToAsync(Console.OpenStandardOutput());
                     var stderrTask = stderrPipe.CopyToAsync(Console.OpenStandardError());
 
+                    Console.WriteLine("Client: Stdin CopyToAsync started.");
+                    Console.WriteLine("Client: Stdout CopyToAsync started.");
+                    Console.WriteLine("Client: Stderr CopyToAsync started.");
+
                     await Task.WhenAll(stdinTask, stdoutTask, stderrTask);
                     Console.WriteLine("Client: All I/O CopyToAsync tasks completed.");
                 }
