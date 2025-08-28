@@ -321,38 +321,76 @@ namespace net.ninebroadcast.engineering.sudo
 
         private IntPtr GetElevatedToken(IntPtr clientToken)
         {
+            Log($"GetElevatedToken: Attempting to get elevated token for clientToken: {clientToken}");
             uint returnLength;
             IntPtr linkedTokenPtr = IntPtr.Zero;
             try
             {
-                NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenLinkedToken, IntPtr.Zero, 0, out returnLength);
+                Log("GetElevatedToken: Calling GetTokenInformation for TokenLinkedToken (first call to get length).");
+                bool success = NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenLinkedToken, IntPtr.Zero, 0, out returnLength);
+                Log($"GetElevatedToken: GetTokenInformation (first call) success: {success}, returnLength: {returnLength}, LastWin32Error: {Marshal.GetLastWin32Error()}");
+
                 if (returnLength > 0)
                 {
                     linkedTokenPtr = Marshal.AllocHGlobal((int)returnLength);
-                    if (NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenLinkedToken, linkedTokenPtr, returnLength, out returnLength))
+                    Log($"GetElevatedToken: Allocated memory for linked token at {linkedTokenPtr}. Calling GetTokenInformation (second call).");
+                    success = NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenLinkedToken, linkedTokenPtr, returnLength, out returnLength);
+                    Log($"GetElevatedToken: GetTokenInformation (second call) success: {success}, LastWin32Error: {Marshal.GetLastWin32Error()}");
+
+                    if (success)
                     {
                         object obj = Marshal.PtrToStructure(linkedTokenPtr, typeof(NativeMethods.TOKEN_LINKED_TOKEN))!;
                         if (obj != null)
                         {
                             var linkedTokenStruct = (NativeMethods.TOKEN_LINKED_TOKEN)obj!;
-                            if (linkedTokenStruct.LinkedToken != IntPtr.Zero) return linkedTokenStruct.LinkedToken;
+                            Log($"GetElevatedToken: LinkedToken struct obtained. LinkedToken: {linkedTokenStruct.LinkedToken}");
+                            if (linkedTokenStruct.LinkedToken != IntPtr.Zero)
+                            {
+                                Log($"GetElevatedToken: Successfully retrieved linked token: {linkedTokenStruct.LinkedToken}");
+                                return linkedTokenStruct.LinkedToken;
+                            }
+                            else
+                            {
+                                Log("GetElevatedToken: LinkedToken is IntPtr.Zero. No linked token found.");
+                            }
                         }
                         else
                         {
-                            System.Diagnostics.Debug.WriteLine("WARNING: Marshal.PtrToStructure returned null for TOKEN_LINKED_TOKEN.");
+                            Log("WARNING: Marshal.PtrToStructure returned null for TOKEN_LINKED_TOKEN.");
                         }
                     }
                 }
+                else
+                {
+                    Log("GetElevatedToken: GetTokenInformation (first call) returned 0 length. No linked token information available.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"ERROR in GetElevatedToken (TokenLinkedToken part): {ex.Message}, LastWin32Error: {Marshal.GetLastWin32Error()}");
             }
             finally
             {
-                if (linkedTokenPtr != IntPtr.Zero) Marshal.FreeHGlobal(linkedTokenPtr);
+                if (linkedTokenPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(linkedTokenPtr);
+                    Log("GetElevatedToken: Freed linkedTokenPtr.");
+                }
             }
+
+            Log("GetElevatedToken: Falling back to DuplicateTokenEx.");
             IntPtr duplicatedToken = IntPtr.Zero;
             var sa = new NativeMethods.SECURITY_ATTRIBUTES();
             sa.nLength = Marshal.SizeOf(sa);
             sa.bInheritHandle = false;
-            if (NativeMethods.DuplicateTokenEx(clientToken, NativeMethods.TokenAccessFlags.TOKEN_ALL_ACCESS, ref sa, NativeMethods.SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, NativeMethods.TOKEN_TYPE.TokenPrimary, out duplicatedToken)) return duplicatedToken;
+            bool duplicateSuccess = NativeMethods.DuplicateTokenEx(clientToken, NativeMethods.TokenAccessFlags.TOKEN_ALL_ACCESS, ref sa, NativeMethods.SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, NativeMethods.TOKEN_TYPE.TokenPrimary, out duplicatedToken);
+            Log($"GetElevatedToken: DuplicateTokenEx success: {duplicateSuccess}, duplicatedToken: {duplicatedToken}, LastWin32Error: {Marshal.GetLastWin32Error()}");
+            if (duplicateSuccess)
+            {
+                Log($"GetElevatedToken: Returning duplicated token: {duplicatedToken}");
+                return duplicatedToken;
+            }
+            Log("GetElevatedToken: DuplicateTokenEx failed. Returning IntPtr.Zero.");
             return IntPtr.Zero;
         }
 
