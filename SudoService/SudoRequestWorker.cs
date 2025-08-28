@@ -222,22 +222,25 @@ namespace net.ninebroadcast.engineering.sudo
             // If the authenticated user is an administrator, the process will run elevated.
             // If not, it will run with standard user privileges.
 
-            Log($"GetSudoTokenAsync: Authenticated token obtained: {authenticatedToken}. Checking if admin...");
-            bool isAdmin = IsTokenAdmin(authenticatedToken);
-            Log($"GetSudoTokenAsync: IsTokenAdmin returned: {isAdmin}");
-            // If the authenticated user is an administrator, try to get the linked (elevated) token.
-            if (isAdmin)
+            // After successful authentication, try to get the linked (elevated) token if UAC is active.
+            IntPtr finalToken = authenticatedToken;
+            if (authenticatedToken != IntPtr.Zero)
             {
+                Log($"GetSudoTokenAsync: Attempting to get elevated token for authenticatedToken: {authenticatedToken}");
                 IntPtr elevatedToken = GetElevatedToken(authenticatedToken);
                 if (elevatedToken != IntPtr.Zero)
                 {
-                    // Close the original authenticatedToken as we are returning the elevated one.
-                    NativeMethods.CloseHandle(authenticatedToken);
-                    return elevatedToken;
+                    Log($"GetSudoTokenAsync: Successfully obtained elevated token: {elevatedToken}. Closing original token: {authenticatedToken}");
+                    NativeMethods.CloseHandle(authenticatedToken); // Close the original filtered token
+                    finalToken = elevatedToken;
+                }
+                else
+                {
+                    Log($"GetSudoTokenAsync: Failed to obtain elevated token. Using original authenticatedToken: {authenticatedToken}");
                 }
             }
 
-            return authenticatedToken;
+            return finalToken;
         }
 
         private async Task<IntPtr> GetSuTokenAsync(IntPtr clientToken, SudoRequest request)
