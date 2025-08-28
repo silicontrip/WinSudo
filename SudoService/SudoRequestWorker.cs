@@ -36,6 +36,7 @@ namespace net.ninebroadcast.engineering.sudo
  
             try
             {
+                Log("SudoRequestWorker: HandleRequestAsync entered.");
                 Console.WriteLine("Server: HandleRequestAsync started.");
                 Console.WriteLine("Server: Attempting to get client token...");
                 clientToken = GetClientToken();
@@ -221,6 +222,7 @@ namespace net.ninebroadcast.engineering.sudo
             // If the authenticated user is an administrator, the process will run elevated.
             // If not, it will run with standard user privileges.
 
+            Log($"GetSudoTokenAsync: Authenticated token obtained: {authenticatedToken}. Checking if admin...");
             // If the authenticated user is an administrator, try to get the linked (elevated) token.
             if (IsTokenAdmin(authenticatedToken))
             {
