@@ -83,21 +83,20 @@ namespace net.ninebroadcast.engineering.sudo
                     _stderrPipeServer.WaitForConnectionAsync()
                 );
 
-                // Wait for the child process to exit.
-                await Task.Run(() => Process.WaitForExit());
-
-                // Once the process exits, wait for I/O forwarding to complete.
-                await Task.WhenAll(_stdinForwardingTask, _stdoutForwardingTask, _stderrForwardingTask).WaitAsync(TimeSpan.FromSeconds(5));
+                // The I/O forwarding tasks (_stdinForwardingTask, _stdoutForwardingTask, _stderrForwardingTask)
+                // are already started in the constructor. They will run until the streams close.
+                // We don't need to wait for Process.WaitForExit() here, as that would prematurely close the pipes.
+                // The SudoRequestWorker will wait for the process to exit.
             }
             catch (Exception ex)
             {
                 // Log the exception (e.g., to the Windows Event Log)
                 System.Diagnostics.Debug.WriteLine($"ERROR in SudoProcess.RunAsync: {ex.Message}");
+                // Ensure resources are cleaned up if connection fails
+                Dispose();
             }
-            finally
-            {
-                Dispose(); // Ensure all resources are cleaned up.
-            }
+            // No finally block with Dispose() here, as Dispose() is called when Process.Exited event fires
+            // or when SudoRequestWorker disposes the SudoProcess.
         }
 
         public void Dispose()
