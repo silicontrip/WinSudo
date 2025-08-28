@@ -30,7 +30,7 @@ namespace net.ninebroadcast.engineering.sudo
 
             try
             {
-                Console.WriteLine($"Attempting to connect to named pipe '{CommandPipeName}'...");
+                //Console.WriteLine($"Attempting to connect to named pipe '{CommandPipeName}'...");
                 using (var commandPipe = new NamedPipeClientStream(".", CommandPipeName, PipeDirection.InOut, PipeOptions.None))
                 {
                     await commandPipe.ConnectAsync(5000);
