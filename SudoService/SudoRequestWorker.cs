@@ -49,6 +49,8 @@ namespace net.ninebroadcast.engineering.sudo
                     await SendErrorResponse("error", "Received empty or invalid request from client.");
                     return;
                 }
+                Log($"SudoRequestWorker: Received request mode: {request.Mode}");
+                Log("SudoRequestWorker: Evaluating request mode...");
         
                 if (request.Mode.Equals("sudo", StringComparison.OrdinalIgnoreCase))
                 {
@@ -57,6 +59,7 @@ namespace net.ninebroadcast.engineering.sudo
                 }
                 else if (request.Mode.Equals("su", StringComparison.OrdinalIgnoreCase))
                 {
+                    Log("SudoRequestWorker: Mode is 'su'.");
                     Console.WriteLine("Server: mode: su.");
                     userToken = await GetSuTokenAsync(clientToken, request);
                 }
@@ -266,9 +269,13 @@ namespace net.ninebroadcast.engineering.sudo
                 return IntPtr.Zero;
             }
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
+            Log("GetSuTokenAsync: Sending authentication challenge to client.");
             await JsonSerializer.SerializeAsync(_commandPipe, challengeResponse, _jsonOptions);
+            Log("GetSuTokenAsync: Authentication challenge sent. Waiting for pipe drain.");
             _commandPipe.WaitForPipeDrain();
+            Log("GetSuTokenAsync: Pipe drained. Attempting to deserialize authentication request.");
             var authRequest = await JsonSerializer.DeserializeAsync<SudoRequest>(_commandPipe, _jsonOptions);
+            Log("GetSuTokenAsync: Authentication request deserialized.");
             if (authRequest == null)
             {
                 await SendErrorResponse("error", "Received empty or invalid authentication request.");
