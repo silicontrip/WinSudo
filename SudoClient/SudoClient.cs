@@ -128,7 +128,10 @@ namespace net.ninebroadcast.engineering.sudo
                     Console.WriteLine("Client: All I/O pipes connected.");
 
                     Console.WriteLine("Client: Starting CopyToAsync for stdin, stdout, stderr.");
-                    var stdinTask = Console.OpenStandardInput().CopyToAsync(stdinPipe);
+
+                    var stdinCancellationTokenSource = new CancellationTokenSource();
+                    var stdinTask = Console.OpenStandardInput().CopyToAsync(stdinPipe, stdinCancellationTokenSource.Token);
+
                     var stdoutTask = stdoutPipe.CopyToAsync(Console.OpenStandardOutput());
                     var stderrTask = stderrPipe.CopyToAsync(Console.OpenStandardError());
 
@@ -136,7 +139,23 @@ namespace net.ninebroadcast.engineering.sudo
                     Console.WriteLine("Client: Stdout CopyToAsync started.");
                     Console.WriteLine("Client: Stderr CopyToAsync started.");
 
-                    await Task.WhenAll(stdinTask, stdoutTask, stderrTask);
+                    // Create a task that completes when either stdout or stderr completes
+                    var outputCompletionTask = Task.WhenAny(stdoutTask, stderrTask);
+
+                    // Wait for output to complete, then cancel stdin task
+                    await outputCompletionTask;
+                    Console.WriteLine("Client: Output stream completed. Cancelling stdin forwarding.");
+                    stdinCancellationTokenSource.Cancel();
+
+                    // Wait for all tasks to complete (stdinTask will complete due to cancellation)
+                    try
+                    {
+                        await Task.WhenAll(stdinTask, stdoutTask, stderrTask);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Console.WriteLine("Client: Stdin forwarding task was cancelled as expected.");
+                    }
                     Console.WriteLine("Client: All I/O CopyToAsync tasks completed.");
                 }
             }
