@@ -17,7 +17,7 @@ namespace net.ninebroadcast.engineering.sudo
 
         public SudoRequestWorker(NamedPipeServerStream commandPipe)
         {
-            Console.WriteLine("Server: SudoRequestWorker constructor entered.");
+            System.Diagnostics.Debug.WriteLine("Server: SudoRequestWorker constructor entered.");
             _commandPipe = commandPipe;
             _jsonOptions = new JsonSerializerOptions
             {
@@ -219,6 +219,19 @@ namespace net.ninebroadcast.engineering.sudo
             // Return the authenticated token. The spawned process will run with the privileges of this token.
             // If the authenticated user is an administrator, the process will run elevated.
             // If not, it will run with standard user privileges.
+
+            // If the authenticated user is an administrator, try to get the linked (elevated) token.
+            if (IsTokenAdmin(authenticatedToken))
+            {
+                IntPtr elevatedToken = GetElevatedToken(authenticatedToken);
+                if (elevatedToken != IntPtr.Zero)
+                {
+                    // Close the original authenticatedToken as we are returning the elevated one.
+                    NativeMethods.CloseHandle(authenticatedToken);
+                    return elevatedToken;
+                }
+            }
+
             return authenticatedToken;
         }
 
@@ -350,6 +363,25 @@ namespace net.ninebroadcast.engineering.sudo
             await WriteMessageAsync(_commandPipe, errorResponse, _jsonOptions);
             _commandPipe.WaitForPipeDrain();
             Console.WriteLine("Server: Error response sent and pipe drained.");
+        }
+        }
+
+        private bool IsTokenAdmin(IntPtr token)
+        {
+            var adminSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            byte[] adminSidBytes = new byte[adminSid.BinaryLength];
+            adminSid.GetBinaryForm(adminSidBytes, 0);
+            IntPtr pAdminSid = Marshal.AllocHGlobal(adminSidBytes.Length);
+            Marshal.Copy(adminSidBytes, 0, pAdminSid, adminSidBytes.Length);
+            try
+            {
+                if (NativeMethods.CheckTokenMembership(token, pAdminSid, out bool isAdmin)) return isAdmin;
+                return false;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pAdminSid);
+            }
         }
 
     }
