@@ -38,9 +38,12 @@ namespace net.ninebroadcast.engineering.sudo
 
                     var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-                    await JsonSerializer.SerializeAsync(commandPipe, request, jsonOptions);
+                    Console.WriteLine("Client: Attempting to serialize request to pipe...");
+                    await WriteMessageAsync(commandPipe, request, jsonOptions);
+                    Console.WriteLine("Client: Request serialized. Attempting to deserialize response from pipe...");
 
-                    var response = await JsonSerializer.DeserializeAsync<SudoServerResponse>(commandPipe, jsonOptions);
+                    var response = await ReadMessageAsync<SudoServerResponse>(commandPipe, jsonOptions);
+                    Console.WriteLine("Client: Response deserialized from pipe.");
                     if (response == null)
                     {
                         Console.Error.WriteLine("Error: Received empty or invalid response from server.");
@@ -53,9 +56,12 @@ namespace net.ninebroadcast.engineering.sudo
                         string password = ReadPassword();
 
                         var authRequest = new SudoRequest { Password = password };
-                        await JsonSerializer.SerializeAsync(commandPipe, authRequest, jsonOptions);
+                        Console.WriteLine("Client: Attempting to serialize authentication request to pipe...");
+                        await WriteMessageAsync(commandPipe, authRequest, jsonOptions);
+                        Console.WriteLine("Client: Authentication request serialized. Attempting to deserialize response from pipe...");
 
-                        response = await JsonSerializer.DeserializeAsync<SudoServerResponse>(commandPipe, jsonOptions);
+                        response = await ReadMessageAsync<SudoServerResponse>(commandPipe, jsonOptions);
+                        Console.WriteLine("Client: Authentication response deserialized from pipe.");
                         if (response == null)
                         {
                             Console.Error.WriteLine("Error: Received empty or invalid response from server after authentication attempt.");
@@ -104,29 +110,37 @@ namespace net.ninebroadcast.engineering.sudo
 
         private static async Task HandleIoForwarding(SudoServerResponse successData)
         {
+            Console.WriteLine("Client: Entering HandleIoForwarding.");
             try
             {
                 using (var stdinPipe = new NamedPipeClientStream(".", successData.StdinPipeName!, PipeDirection.Out, PipeOptions.None))
                 using (var stdoutPipe = new NamedPipeClientStream(".", successData.StdoutPipeName!, PipeDirection.In, PipeOptions.None))
                 using (var stderrPipe = new NamedPipeClientStream(".", successData.StderrPipeName!, PipeDirection.In, PipeOptions.None))
                 {
+                    Console.WriteLine($"Client: Connecting to stdin pipe '{successData.StdinPipeName}'...");
+                    Console.WriteLine($"Client: Connecting to stdout pipe '{successData.StdoutPipeName}'...");
+                    Console.WriteLine($"Client: Connecting to stderr pipe '{successData.StderrPipeName}'...");
                     await Task.WhenAll(
                         stdinPipe.ConnectAsync(5000),
                         stdoutPipe.ConnectAsync(5000),
                         stderrPipe.ConnectAsync(5000)
                     );
+                    Console.WriteLine("Client: All I/O pipes connected.");
 
+                    Console.WriteLine("Client: Starting CopyToAsync for stdin, stdout, stderr.");
                     var stdinTask = Console.OpenStandardInput().CopyToAsync(stdinPipe);
                     var stdoutTask = stdoutPipe.CopyToAsync(Console.OpenStandardOutput());
                     var stderrTask = stderrPipe.CopyToAsync(Console.OpenStandardError());
 
                     await Task.WhenAll(stdinTask, stdoutTask, stderrTask);
+                    Console.WriteLine("Client: All I/O CopyToAsync tasks completed.");
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"I/O Error: {ex.Message}");
+                Console.Error.WriteLine($"Client I/O Error in HandleIoForwarding: {ex.Message}");
             }
+            Console.WriteLine("Client: Exiting HandleIoForwarding.");
         }
 
         private static SudoRequest? ParseArguments(string[] args)
@@ -182,6 +196,45 @@ namespace net.ninebroadcast.engineering.sudo
 
             request.Command = string.Join(" ", commandArgs);
             return request;
+        }
+
+        private static async Task WriteMessageAsync<T>(Stream stream, T message, JsonSerializerOptions options)
+        {
+            using (var ms = new MemoryStream())
+            {
+                await JsonSerializer.SerializeAsync(ms, message, options);
+                var bytes = ms.ToArray();
+                var lengthBytes = BitConverter.GetBytes(bytes.Length);
+
+                await stream.WriteAsync(lengthBytes, 0, lengthBytes.Length);
+                await stream.WriteAsync(bytes, 0, bytes.Length);
+                await stream.FlushAsync();
+            }
+        }
+
+        private static async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
+        {
+            var lengthBytes = new byte[4];
+            var bytesRead = await stream.ReadAsync(lengthBytes, 0, lengthBytes.Length);
+            if (bytesRead == 0) return default(T);
+            if (bytesRead != 4) throw new IOException("Failed to read message length.");
+
+            var length = BitConverter.ToInt32(lengthBytes, 0);
+            if (length <= 0) throw new IOException("Invalid message length.");
+
+            var messageBytes = new byte[length];
+            bytesRead = 0;
+            while (bytesRead < length)
+            {
+                var currentRead = await stream.ReadAsync(messageBytes, bytesRead, length - bytesRead);
+                if (currentRead == 0) throw new IOException("Pipe closed prematurely.");
+                bytesRead += currentRead;
+            }
+
+            using (var ms = new MemoryStream(messageBytes))
+            {
+                return await JsonSerializer.DeserializeAsync<T>(ms, options);
+            }
         }
 
         private static void ShowUsage()
