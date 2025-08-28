@@ -3,6 +3,8 @@ using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace net.ninebroadcast.engineering.sudo
 {
@@ -21,9 +23,10 @@ namespace net.ninebroadcast.engineering.sudo
             IntPtr hParentStd_Err_Rd = IntPtr.Zero; // Parent reads from child's stderr
 
             // Named pipe server streams for client communication.
-            string stdinPipeName = Guid.NewGuid().ToString();
-            string stdoutPipeName = Guid.NewGuid().ToString();
-            string stderrPipeName = Guid.NewGuid().ToString();
+            String pipeBaseName = Guid.NewGuid().ToString();
+            string stdinPipeName = "stdin-" + pipeBaseName;
+            string stdoutPipeName = "stdout-" + pipeBaseName;
+            string stderrPipeName = "stderr-" + pipeBaseName;
 
             NamedPipeServerStream stdinPipeServer = null!;
             NamedPipeServerStream stdoutPipeServer = null!;
@@ -67,9 +70,9 @@ namespace net.ninebroadcast.engineering.sudo
                 childProcess = System.Diagnostics.Process.GetProcessById((int)processInfo.dwProcessId);
 
                 // 6. Create the three named pipes for the client to connect to.
-                stdinPipeServer = new NamedPipeServerStream(stdinPipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                stdoutPipeServer = new NamedPipeServerStream(stdoutPipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                stderrPipeServer = new NamedPipeServerStream(stderrPipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                stdinPipeServer = CreateNamedPipeServerStreamWithSecurity(stdinPipeName, PipeDirection.In);
+                stdoutPipeServer = CreateNamedPipeServerStreamWithSecurity(stdoutPipeName, PipeDirection.Out);
+                stderrPipeServer = CreateNamedPipeServerStreamWithSecurity(stderrPipeName, PipeDirection.Out);
 
                 // 7. Return the new process and the parent-side streams for the caller to manage.
                 var sudoProcess = new SudoProcess(
@@ -168,6 +171,85 @@ namespace net.ninebroadcast.engineering.sudo
                 if (pSa != IntPtr.Zero)
                 {
                     Marshal.FreeHGlobal(pSa); // Free the allocated unmanaged memory
+                }
+            }
+        }
+
+        private NamedPipeServerStream CreateNamedPipeServerStreamWithSecurity(string pipeName, PipeDirection direction)
+        {
+            // Constants for CreateNamedPipe
+            const uint PIPE_ACCESS_DUPLEX = 0x00000003;
+            const uint FILE_FLAG_OVERLAPPED = 0x40000000;
+            const uint PIPE_TYPE_BYTE = 0x00000000;
+            const uint PIPE_READMODE_BYTE = 0x00000000;
+            const uint PIPE_WAIT = 0x00000000;
+            const uint PIPE_UNLIMITED_INSTANCES = 255;
+
+            IntPtr hPipe = IntPtr.Zero;
+            IntPtr pSecurityAttributes = IntPtr.Zero;
+            IntPtr pSecurityDescriptor = IntPtr.Zero;
+
+            try
+            {
+                uint dwOpenMode = PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED;
+                uint dwPipeMode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT;
+
+                // Define the Security Descriptor Definition Language (SDDL) string.
+                // D:(A;;GA;;;WD) - DACL: Allow Generic All (GA) access to Everyone (WD).
+                // S:(ML;;NW;;;ME) - SACL: Mandatory Label (ML), No Write Up (NW), Medium Integrity Level (ME).
+                // This allows processes at Medium integrity level to write to the pipe.
+                string sddl = $"D:(A;;GA;;;WD)S:(ML;;NW;;;{NativeMethods.SECURITY_MANDATORY_MEDIUM_RID})";
+
+                uint securityDescriptorSize;
+                if (!NativeMethods.ConvertStringSecurityDescriptorToSecurityDescriptor(
+                    sddl,
+                    NativeMethods.SDDL_REVISION_1,
+                    out pSecurityDescriptor,
+                    out securityDescriptorSize))
+                {
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Failed to convert SDDL to Security Descriptor.");
+                }
+
+                NativeMethods.SECURITY_ATTRIBUTES sa = new NativeMethods.SECURITY_ATTRIBUTES();
+                sa.nLength = Marshal.SizeOf(sa);
+                sa.lpSecurityDescriptor = pSecurityDescriptor;
+                sa.bInheritHandle = false;
+
+                pSecurityAttributes = Marshal.AllocHGlobal(Marshal.SizeOf(sa));
+                Marshal.StructureToPtr(sa, pSecurityAttributes, false);
+
+                hPipe = NativeMethods.CreateNamedPipe(
+                    "\\\\.\\pipe\\" + pipeName,
+                    dwOpenMode,
+                    dwPipeMode,
+                    PIPE_UNLIMITED_INSTANCES,
+                    0, // nOutBufferSize
+                    0, // nInBufferSize
+                    0, // nDefaultTimeOut
+                    pSecurityAttributes
+                );
+
+                if (hPipe == NativeMethods.INVALID_HANDLE_VALUE)
+                {
+                    throw new System.ComponentModel.Win32Exception();
+                }
+
+                return new NamedPipeServerStream(
+                    direction,
+                    false, // isConnected
+                    true, // isAsync
+                    new Microsoft.Win32.SafeHandles.SafePipeHandle(hPipe, true)
+                );
+            }
+            finally
+            {
+                if (pSecurityAttributes != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(pSecurityAttributes);
+                }
+                if (pSecurityDescriptor != IntPtr.Zero)
+                {
+                    NativeMethods.LocalFree(pSecurityDescriptor);
                 }
             }
         }
