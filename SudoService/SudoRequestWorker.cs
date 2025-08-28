@@ -223,8 +223,10 @@ namespace net.ninebroadcast.engineering.sudo
             // If not, it will run with standard user privileges.
 
             Log($"GetSudoTokenAsync: Authenticated token obtained: {authenticatedToken}. Checking if admin...");
+            bool isAdmin = IsTokenAdmin(authenticatedToken);
+            Log($"GetSudoTokenAsync: IsTokenAdmin returned: {isAdmin}");
             // If the authenticated user is an administrator, try to get the linked (elevated) token.
-            if (IsTokenAdmin(authenticatedToken))
+            if (isAdmin)
             {
                 IntPtr elevatedToken = GetElevatedToken(authenticatedToken);
                 if (elevatedToken != IntPtr.Zero)
