@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using static net.ninebroadcast.engineering.sudo.Logger;
 
 namespace net.ninebroadcast.engineering.sudo
 {

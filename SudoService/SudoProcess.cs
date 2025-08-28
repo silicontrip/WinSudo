@@ -69,7 +69,6 @@ namespace net.ninebroadcast.engineering.sudo
         /// </summary>
         public async Task RunAsync()
         {
-            Log("SudoProcess: RunAsync started. Waiting for client connections...");
             try
             {
                 // Wait for the client to connect to the named pipes.
@@ -78,21 +77,12 @@ namespace net.ninebroadcast.engineering.sudo
                     _stdoutPipeServer.WaitForConnectionAsync(),
                     _stderrPipeServer.WaitForConnectionAsync()
                 );
-                Log("SudoProcess: All named pipes connected. I/O forwarding active.");
-                Log($"StdinPipeServer IsConnected: {_stdinPipeServer.IsConnected}");
-                Log($"StdoutPipeServer IsConnected: {_stdoutPipeServer.IsConnected}");
-                Log($"StderrPipeServer IsConnected: {_stderrPipeServer.IsConnected}");
 
                 // Start I/O forwarding tasks here, now that pipes are connected.
                 _stdinForwardingTask = Task.Run(async () => {
-                    Log("SudoProcess: Stdin forwarding task started.");
-                    Log($"StdinPipeServer CanRead: {_stdinPipeServer.CanRead}, CanWrite: {_stdinPipeServer.CanWrite}");
-                    Log($"ChildStdinStream CanRead: {_childStdinStream.CanRead}, CanWrite: {_childStdinStream.CanWrite}");
                     try
                     {
-                        Log("SudoProcess: Attempting to copy from StdinPipeServer to ChildStdinStream...");
                         await _stdinPipeServer.CopyToAsync(_childStdinStream);
-                        Log("SudoProcess: Stdin forwarding completed.");
                     }
                     catch (Exception ex)
                     {
@@ -100,14 +90,9 @@ namespace net.ninebroadcast.engineering.sudo
                     }
                 });
                 _stdoutForwardingTask = Task.Run(async () => {
-                    Log("SudoProcess: Stdout forwarding task started.");
-                    Log($"ChildStdoutStream CanRead: {_childStdoutStream.CanRead}, CanWrite: {_childStdoutStream.CanWrite}");
-                    Log($"StdoutPipeServer CanRead: {_stdoutPipeServer.CanRead}, CanWrite: {_stdoutPipeServer.CanWrite}");
                     try
                     {
-                        Log("SudoProcess: Attempting to copy from ChildStdoutStream to StdoutPipeServer...");
                         await _childStdoutStream.CopyToAsync(_stdoutPipeServer);
-                        Log("SudoProcess: Stdout forwarding completed.");
                     }
                     catch (Exception ex)
                     {
@@ -115,14 +100,9 @@ namespace net.ninebroadcast.engineering.sudo
                     }
                 });
                 _stderrForwardingTask = Task.Run(async () => {
-                    Log("SudoProcess: Stderr forwarding task started.");
-                    Log($"ChildStderrStream CanRead: {_childStderrStream.CanRead}, CanWrite: {_childStderrStream.CanWrite}");
-                    Log($"StderrPipeServer CanRead: {_stderrPipeServer.CanRead}, CanWrite: {_stderrPipeServer.CanWrite}");
                     try
                     {
-                        Log("SudoProcess: Attempting to copy from ChildStderrStream to StderrPipeServer...");
                         await _childStderrStream.CopyToAsync(_stderrPipeServer);
-                        Log("SudoProcess: Stderr forwarding completed.");
                     }
                     catch (Exception ex)
                     {
@@ -146,27 +126,18 @@ namespace net.ninebroadcast.engineering.sudo
 
         public void Dispose()
         {
-            Log("SudoProcess: Dispose called. Releasing resources.");
             // Dispose of the process object
             Process?.Dispose();
-            Log("SudoProcess: Process disposed.");
 
             // Dispose of the pipe servers
             _stdinPipeServer?.Dispose();
-            Log("SudoProcess: StdinPipeServer disposed.");
             _stdoutPipeServer?.Dispose();
-            Log("SudoProcess: StdoutPipeServer disposed.");
             _stderrPipeServer?.Dispose();
-            Log("SudoProcess: StderrPipeServer disposed.");
 
             // Dispose of the child process streams
             _childStdinStream?.Dispose();
-            Log("SudoProcess: ChildStdinStream disposed.");
             _childStdoutStream?.Dispose();
-            Log("SudoProcess: ChildStdoutStream disposed.");
             _childStderrStream?.Dispose();
-            Log("SudoProcess: ChildStderrStream disposed.");
-            Log("SudoProcess: All resources released.");
         }
     }
 }
