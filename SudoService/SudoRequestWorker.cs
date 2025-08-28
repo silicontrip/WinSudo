@@ -17,6 +17,7 @@ namespace net.ninebroadcast.engineering.sudo
 
         public SudoRequestWorker(NamedPipeServerStream commandPipe)
         {
+            Console.WriteLine("Server: SudoRequestWorker constructor entered.");
             _commandPipe = commandPipe;
             _jsonOptions = new JsonSerializerOptions
             {
@@ -34,20 +35,27 @@ namespace net.ninebroadcast.engineering.sudo
  
             try
             {
+                Console.WriteLine("Server: HandleRequestAsync started.");
+                Console.WriteLine("Server: Attempting to get client token...");
                 clientToken = GetClientToken();
-                var request = await JsonSerializer.DeserializeAsync<SudoRequest>(_commandPipe, _jsonOptions);
+                Console.WriteLine("Server: Client token obtained. Attempting to deserialize request from pipe...");
+                var request = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
+                Console.WriteLine("Server: Request deserialized from pipe.");
                 if (request == null)
                 {
+                    Console.WriteLine("Server: Received null request.");
                     await SendErrorResponse("error", "Received empty or invalid request from client.");
                     return;
                 }
         
                 if (request.Mode.Equals("sudo", StringComparison.OrdinalIgnoreCase))
                 {
+                    Console.WriteLine("Server: mode: sudo.");
                     userToken = await GetSudoTokenAsync(clientToken, request);
                 }
                 else if (request.Mode.Equals("su", StringComparison.OrdinalIgnoreCase))
                 {
+                    Console.WriteLine("Server: mode: su.");
                     userToken = await GetSuTokenAsync(clientToken, request);
                 }
                 else
@@ -71,12 +79,11 @@ namespace net.ninebroadcast.engineering.sudo
                     StdoutPipeName = sudoProcess.StdoutPipeName,
                     StderrPipeName = sudoProcess.StderrPipeName
                 };
-                await JsonSerializer.SerializeAsync(_commandPipe, successResponse, _jsonOptions);
+                Console.WriteLine("Server: Attempting to serialize success response to pipe...");
+                await WriteMessageAsync(_commandPipe, successResponse, _jsonOptions);
+                Console.WriteLine("Server: Success response serialized. Waiting for pipe drain...");
                 _commandPipe.WaitForPipeDrain();
-        
-                // The command pipe's job is done. Close it.
-                _commandPipe.Close();
-                _commandPipe.Dispose();
+                Console.WriteLine("Server: Pipe drained.");
         
                 // The SudoProcess object is now responsible for managing its internal pipes and I/O forwarding.
                 // We just need to wait for the helper process to complete its work.
@@ -84,7 +91,7 @@ namespace net.ninebroadcast.engineering.sudo
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"ERROR handling request: {ex.Message}");
+                Console.Error.WriteLine($"ERROR handling request: {ex.Message}");
                 if (_commandPipe.IsConnected)
                 {
                     await SendErrorResponse("error", $"Server error: {ex.Message}");
@@ -95,9 +102,51 @@ namespace net.ninebroadcast.engineering.sudo
                 if (clientToken != IntPtr.Zero) NativeMethods.CloseHandle(clientToken);
                 if (userToken != IntPtr.Zero) NativeMethods.CloseHandle(userToken);
                 sudoProcess?.Dispose();
+                _commandPipe.Dispose(); // Ensure the command pipe is always disposed.
             }
         }
 
+
+
+
+        private async Task WriteMessageAsync<T>(Stream stream, T message, JsonSerializerOptions options)
+        {
+            using (var ms = new MemoryStream())
+            {
+                await JsonSerializer.SerializeAsync(ms, message, options);
+                var bytes = ms.ToArray();
+                var lengthBytes = BitConverter.GetBytes(bytes.Length);
+
+                await stream.WriteAsync(lengthBytes, 0, lengthBytes.Length);
+                await stream.WriteAsync(bytes, 0, bytes.Length);
+                await stream.FlushAsync();
+            }
+        }
+
+        private async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
+        {
+            var lengthBytes = new byte[4];
+            var bytesRead = await stream.ReadAsync(lengthBytes, 0, lengthBytes.Length);
+            if (bytesRead == 0) return default(T);
+            if (bytesRead != 4) throw new IOException("Failed to read message length.");
+
+            var length = BitConverter.ToInt32(lengthBytes, 0);
+            if (length <= 0) throw new IOException("Invalid message length.");
+
+            var messageBytes = new byte[length];
+            bytesRead = 0;
+            while (bytesRead < length)
+            {
+                var currentRead = await stream.ReadAsync(messageBytes, bytesRead, length - bytesRead);
+                if (currentRead == 0) throw new IOException("Pipe closed prematurely.");
+                bytesRead += currentRead;
+            }
+
+            using (var ms = new MemoryStream(messageBytes))
+            {
+                return await JsonSerializer.DeserializeAsync<T>(ms, options);
+            }
+        }
 
         private IntPtr GetClientToken()
         {
@@ -147,23 +196,30 @@ namespace net.ninebroadcast.engineering.sudo
 
         private async Task<IntPtr> GetSudoTokenAsync(IntPtr clientToken, SudoRequest request)
         {
-            if (!IsClientAdmin(clientToken)) { await SendErrorResponse("access_denied", "User is not an administrator."); return IntPtr.Zero; }
+            // Always challenge for password in sudo mode
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
-            await JsonSerializer.SerializeAsync(_commandPipe, challengeResponse, _jsonOptions);
+            await WriteMessageAsync(_commandPipe, challengeResponse, _jsonOptions);
             _commandPipe.WaitForPipeDrain();
-            var authRequest = await JsonSerializer.DeserializeAsync<SudoRequest>(_commandPipe, _jsonOptions);
-            if (authRequest == null)
+
+            var authRequest = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
+            if (authRequest == null || authRequest.Password == null)
             {
-                await SendErrorResponse("error", "Received empty or invalid authentication request.");
+                await SendErrorResponse("authentication_failure", "Password not provided or invalid authentication request.");
                 return IntPtr.Zero;
             }
-            if (authRequest.Password == null)
+
+            // Validate the user's password and get a token
+            IntPtr authenticatedToken = ValidateUserPassword(clientToken, authRequest.Password);
+            if (authenticatedToken == IntPtr.Zero)
             {
-                await SendErrorResponse("authentication_failure", "Password not provided.");
+                await SendErrorResponse("authentication_failure", "Invalid password.");
                 return IntPtr.Zero;
             }
-            if (!ValidateUserPassword(clientToken, authRequest.Password)) { await SendErrorResponse("authentication_failure", "Invalid password."); return IntPtr.Zero; }
-            return GetElevatedToken(clientToken);
+
+            // Return the authenticated token. The spawned process will run with the privileges of this token.
+            // If the authenticated user is an administrator, the process will run elevated.
+            // If not, it will run with standard user privileges.
+            return authenticatedToken;
         }
 
         private async Task<IntPtr> GetSuTokenAsync(IntPtr clientToken, SudoRequest request)
@@ -223,7 +279,7 @@ namespace net.ninebroadcast.engineering.sudo
             }
         }
 
-        private bool ValidateUserPassword(IntPtr clientToken, string password)
+        private IntPtr ValidateUserPassword(IntPtr clientToken, string password)
         {
             IntPtr pUser = IntPtr.Zero;
             try
@@ -240,10 +296,9 @@ namespace net.ninebroadcast.engineering.sudo
                 if (!NativeMethods.LookupAccountSid(null, tokenUser.User.Sid, name, ref cchName, domain, ref cchReferencedDomainName, out _)) throw new System.ComponentModel.Win32Exception();
                 if (NativeMethods.LogonUserW(name.ToString(), domain.ToString(), password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hToken))
                 {
-                    NativeMethods.CloseHandle(hToken);
-                    return true;
+                    return hToken;
                 }
-                return false;
+                return IntPtr.Zero;
             }
             finally
             {
@@ -290,9 +345,12 @@ namespace net.ninebroadcast.engineering.sudo
 
         private async Task SendErrorResponse(string status, string message)
         {
+            Console.WriteLine($"Server: Sending error response - Status: {status}, Message: {message}");
             var errorResponse = new SudoServerResponse { Status = status, ErrorMessage = message };
-            await JsonSerializer.SerializeAsync(_commandPipe, errorResponse, _jsonOptions);
+            await WriteMessageAsync(_commandPipe, errorResponse, _jsonOptions);
             _commandPipe.WaitForPipeDrain();
+            Console.WriteLine("Server: Error response sent and pipe drained.");
         }
+
     }
 }

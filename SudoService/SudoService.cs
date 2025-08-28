@@ -35,7 +35,6 @@ namespace net.ninebroadcast.engineering.sudo
             // Gracefully close the current pipe server to unblock WaitForConnection()
             _currentPipeServer?.Close(); // Close the pipe to unblock the listener thread
             _currentPipeServer?.Dispose(); // Explicitly dispose the pipe server
-            _listenerThread?.Join();
         }
 
         private void ListenForClients()
@@ -107,7 +106,7 @@ namespace net.ninebroadcast.engineering.sudo
                     pipeServer = new NamedPipeServerStream(
                         PipeDirection.InOut,
                         false, // isConnected
-                        false, // isAsync
+                        true, // isAsync
                         new Microsoft.Win32.SafeHandles.SafePipeHandle(hPipe, true) // handle
                     );
                     Console.WriteLine($"NamedPipeServerStream created for '{CommandPipeName}'.");
@@ -115,11 +114,14 @@ namespace net.ninebroadcast.engineering.sudo
                     Console.WriteLine($"Waiting for client connection on '{CommandPipeName}'...");
                     pipeServer.WaitForConnection();
                     Console.WriteLine($"Client connected to '{CommandPipeName}'.");
-                    _currentPipeServer = null;
 
                     // Hand off the connected client to a worker task.
                     var worker = new SudoRequestWorker(pipeServer);
                     Task.Run(() => worker.HandleRequestAsync(), cancellationToken);
+
+                    // Set _currentPipeServer to null only after the pipe has been handed off
+                    // and before the loop prepares for the next connection.
+                    _currentPipeServer = null;
                 }
                 catch (Exception ex)
                 {
@@ -150,17 +152,18 @@ namespace net.ninebroadcast.engineering.sudo
                     }
                     else
                     {
-                        Console.Error.WriteLine($"ERROR in listener loop: {ex.Message}"); // This line is redundant now
+                        Console.Error.WriteLine($"ERROR in listener loop: {ex.Message}");
+                        // Add a small delay to prevent tight looping on persistent errors
+                        Thread.Sleep(1000);
                     }
                     // Ensure pipe is disposed if creation failed or connection failed before handing off
                     pipeServer?.Dispose();
                 }
                 finally
                 {
-                    if (hPipe != IntPtr.Zero && hPipe != NativeMethods.INVALID_HANDLE_VALUE)
-                    {
-                        NativeMethods.CloseHandle(hPipe);
-                    }
+                    // hPipe is owned by SafePipeHandle, which is owned by pipeServer.
+                    // pipeServer is disposed by SudoRequestWorker, or when it goes out of scope.
+                    // So, no need to call CloseHandle(hPipe) here.
                     if (pSecurityAttributes != IntPtr.Zero)
                     {
                         Marshal.FreeHGlobal(pSecurityAttributes);
