@@ -254,9 +254,15 @@ namespace net.ninebroadcast.engineering.sudo
 
             if (IsClientAdmin(clientToken))
             {
-                // Line 160
-                if (NativeMethods.LogonUserW(request.TargetUser, ".", "", NativeMethods.LogonType.LOGON32_LOGON_BATCH, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hToken)) return hToken;
-                await SendErrorResponse("error", "Passwordless su failed.");
+                Log($"GetSuTokenAsync: Client is admin. Attempting passwordless logon for user: {request.TargetUser}, domain: . , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_BATCH}");
+                if (NativeMethods.LogonUserW(request.TargetUser, ".", "", NativeMethods.LogonType.LOGON32_LOGON_BATCH, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hToken))
+                {
+                    Log($"GetSuTokenAsync: Passwordless logon successful for {request.TargetUser}. Token: {hToken}");
+                    return hToken;
+                }
+                int lastError = Marshal.GetLastWin32Error();
+                Log($"ERROR: GetSuTokenAsync: Passwordless logon failed for {request.TargetUser}. LastWin32Error: {lastError}");
+                await SendErrorResponse("error", $"Passwordless su failed. Win32 Error: {lastError}");
                 return IntPtr.Zero;
             }
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
@@ -276,9 +282,15 @@ namespace net.ninebroadcast.engineering.sudo
                 return IntPtr.Zero;
             }
 
-            // Line 168
-            if (NativeMethods.LogonUserW(request.TargetUser, ".", authRequest.Password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hSuToken)) return hSuToken;
-            await SendErrorResponse("authentication_failure", "Invalid username or password.");
+            Log($"GetSuTokenAsync: Client is not admin. Attempting interactive logon for user: {request.TargetUser}, domain: . , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
+            if (NativeMethods.LogonUserW(request.TargetUser, ".", authRequest.Password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hSuToken))
+            {
+                Log($"GetSuTokenAsync: Interactive logon successful for {request.TargetUser}. Token: {hSuToken}");
+                return hSuToken;
+            }
+            int lastErrorAuth = Marshal.GetLastWin32Error();
+            Log($"ERROR: GetSuTokenAsync: Interactive logon failed for {request.TargetUser}. LastWin32Error: {lastErrorAuth}");
+            await SendErrorResponse("authentication_failure", $"Invalid username or password. Win32 Error: {lastErrorAuth}");
             return IntPtr.Zero;
         }
 
