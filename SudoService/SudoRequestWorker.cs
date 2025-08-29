@@ -47,8 +47,13 @@ namespace net.ninebroadcast.engineering.sudo
                 //Console.WriteLine("Server: Attempting to get client token...");
                 clientToken = GetClientToken();
                 uint clientSessionId = GetSessionIdFromToken(clientToken);
+                Log($"HandleRequestAsync: Client Session ID: {clientSessionId}");
                 //Console.WriteLine("Server: Client token obtained. Attempting to deserialize request from pipe...");
                 var request = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
+                Log($"HandleRequestAsync: Request Session ID (from client): {request.SessionId?.ToString() ?? "null"}");
+
+                uint targetSessionId = request.SessionId ?? clientSessionId;
+                Log($"HandleRequestAsync: Target Session ID (from request or client): {targetSessionId}");
                 //Console.WriteLine("Server: Request deserialized from pipe.");
                 if (request == null)
                 {
@@ -62,13 +67,13 @@ namespace net.ninebroadcast.engineering.sudo
                 if (request.Mode.Equals("sudo", StringComparison.OrdinalIgnoreCase))
                 {
                     //Console.WriteLine("Server: mode: sudo.");
-                    userToken = await GetSudoTokenAsync(clientToken, request);
+                    userToken = await GetSudoTokenAsync(clientToken, request, targetSessionId);
                 }
                 else if (request.Mode.Equals("su", StringComparison.OrdinalIgnoreCase))
                 {
                     //Log("SudoRequestWorker: Mode is 'su'.");
                     //Console.WriteLine("Server: mode: su.");
-                    userToken = await GetSuTokenAsync(clientToken, request);
+                    userToken = await GetSuTokenAsync(clientToken, request, targetSessionId);
                 }
                 else
                 {
@@ -80,8 +85,6 @@ namespace net.ninebroadcast.engineering.sudo
                 {
                     return; // Auth failed, response already sent.
                 }
-        
-                uint targetSessionId = request.SessionId ?? clientSessionId;
                 var options = new ProcessSpawnerOptions { WorkingDirectory = "C:\\", SessionId = targetSessionId };
                 
                 try
@@ -233,7 +236,7 @@ namespace net.ninebroadcast.engineering.sudo
             return sessionId;
         }
 
-        private async Task<IntPtr> GetSudoTokenAsync(IntPtr clientToken, SudoRequest request)
+        private async Task<IntPtr> GetSudoTokenAsync(IntPtr clientToken, SudoRequest request, uint targetSessionId)
         {
             // Always challenge for password in sudo mode
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
@@ -288,22 +291,19 @@ namespace net.ninebroadcast.engineering.sudo
             }
 
             // Ensure the token is associated with the target session ID
-            if (request.SessionId.HasValue)
+            Log($"GetSudoTokenAsync: Attempting to set token session ID to {targetSessionId} for token {finalToken}.");
+            if (!NativeMethods.SetTokenInformation(finalToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref targetSessionId, sizeof(uint)))
             {
-                uint targetSessionId = request.SessionId.Value;
-                if (!NativeMethods.SetTokenInformation(finalToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref targetSessionId, sizeof(uint)))
-                {
-                    int lastError = Marshal.GetLastWin32Error();
-                    Log($"GetSudoTokenAsync: Failed to set token session ID to {targetSessionId}. LastWin32Error: {lastError}");
-                    NativeMethods.CloseHandle(finalToken); // Close token if we can't set session
-                    return IntPtr.Zero;
-                }
-                Log($"GetSudoTokenAsync: Successfully set token session ID to {targetSessionId}.");
+                int lastError = Marshal.GetLastWin32Error();
+                Log($"GetSudoTokenAsync: Failed to set token session ID to {targetSessionId}. LastWin32Error: {lastError}");
+                NativeMethods.CloseHandle(finalToken); // Close token if we can't set session
+                return IntPtr.Zero;
             }
+            Log($"GetSudoTokenAsync: Successfully set token session ID to {targetSessionId} for token {finalToken}.");
             return finalToken;
         }
 
-        private async Task<IntPtr> GetSuTokenAsync(IntPtr clientToken, SudoRequest request)
+        private async Task<IntPtr> GetSuTokenAsync(IntPtr clientToken, SudoRequest request, uint targetSessionId)
         {
             // Check for null TargetUser at the beginning
             if (request.TargetUser == null)
@@ -416,18 +416,15 @@ namespace net.ninebroadcast.engineering.sudo
                 {
                     Log($"GetSuTokenAsync: Successfully obtained token for {request.TargetUser} without password.");
                     // Ensure the token is associated with the target session ID
-                    if (request.SessionId.HasValue)
+                    Log($"GetSuTokenAsync: Attempting to set token session ID to {targetSessionId} for token {systemToken}.");
+                    if (!NativeMethods.SetTokenInformation(systemToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref targetSessionId, sizeof(uint)))
                     {
-                        uint targetSessionId = request.SessionId.Value;
-                        if (!NativeMethods.SetTokenInformation(systemToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref targetSessionId, sizeof(uint)))
-                        {
-                            int lastError = Marshal.GetLastWin32Error();
-                            Log($"GetSuTokenAsync: Failed to set token session ID to {targetSessionId}. LastWin32Error: {lastError}");
-                            NativeMethods.CloseHandle(systemToken); // Close token if we can't set session
-                            return IntPtr.Zero;
-                        }
-                        Log($"GetSuTokenAsync: Successfully set token session ID to {targetSessionId}.");
+                        int lastError = Marshal.GetLastWin32Error();
+                        Log($"GetSuTokenAsync: Failed to set token session ID to {targetSessionId}. LastWin32Error: {lastError}");
+                        NativeMethods.CloseHandle(systemToken); // Close token if we can't set session
+                        return IntPtr.Zero;
                     }
+                    Log($"GetSuTokenAsync: Successfully set token session ID to {targetSessionId}.");
                     return systemToken;
                 }
                 else
@@ -482,18 +479,15 @@ namespace net.ninebroadcast.engineering.sudo
             {
                 //Log($"GetSuTokenAsync: Interactive logon successful for {request.TargetUser}. Token: {hSuToken}");
                 // Ensure the token is associated with the target session ID
-                if (request.SessionId.HasValue)
+                Log($"GetSuTokenAsync: Attempting to set token session ID to {targetSessionId} for token {hSuToken}.");
+                if (!NativeMethods.SetTokenInformation(hSuToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref targetSessionId, sizeof(uint)))
                 {
-                    uint targetSessionId = request.SessionId.Value;
-                    if (!NativeMethods.SetTokenInformation(hSuToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref targetSessionId, sizeof(uint)))
-                    {
-                        int lastError = Marshal.GetLastWin32Error();
-                        Log($"GetSuTokenAsync: Failed to set token session ID to {targetSessionId}. LastWin32Error: {lastError}");
-                        NativeMethods.CloseHandle(hSuToken); // Close token if we can't set session
-                        return IntPtr.Zero;
-                    }
-                    Log($"GetSuTokenAsync: Successfully set token session ID to {targetSessionId}.");
+                    int lastError = Marshal.GetLastWin32Error();
+                    Log($"GetSuTokenAsync: Failed to set token session ID to {targetSessionId}. LastWin32Error: {lastError}");
+                    NativeMethods.CloseHandle(hSuToken); // Close token if we can't set session
+                    return IntPtr.Zero;
                 }
+                Log($"GetSuTokenAsync: Successfully set token session ID to {targetSessionId}.");
                 return hSuToken;
             }
             int lastErrorAuth = Marshal.GetLastWin32Error();
