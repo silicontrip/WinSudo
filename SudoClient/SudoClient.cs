@@ -67,6 +67,11 @@ namespace net.ninebroadcast.engineering.sudo
                             Console.Error.WriteLine("Error: Received empty or invalid response from server after authentication attempt.");
                             return;
                         }
+                        Console.WriteLine($"Client: Response status after authentication: {response.Status}");
+                        if (response.Status != "success_proceed_to_io")
+                        {
+                            Console.Error.WriteLine($"Client: Error message after authentication: {response.ErrorMessage}");
+                        }
                     }
 
                     if (response.Status == "success_proceed_to_io")
@@ -235,46 +240,59 @@ namespace net.ninebroadcast.engineering.sudo
 
         private static async Task WriteMessageAsync<T>(Stream stream, T message, JsonSerializerOptions options)
         {
-            //Console.WriteLine($"Client: WriteMessageAsync: Attempting to serialize message of type {typeof(T).Name}.");
+            Console.WriteLine($"Client: WriteMessageAsync: Attempting to serialize message of type {typeof(T).Name}.");
             using (var ms = new MemoryStream())
             {
                 await JsonSerializer.SerializeAsync(ms, message, options);
                 var bytes = ms.ToArray();
 
-                // Use BinaryWriter for ALL writes to the stream
                 using (var bw = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
                 {
                     bw.Write(bytes.Length); // Writes the 4-byte length prefix
                     bw.Write(bytes);        // Writes the actual message payload
                     bw.Flush();             // Ensure all buffered data is written to the underlying stream
                 }
-                //Console.WriteLine($"Client: WriteMessageAsync: Writing {bytes.Length} bytes (plus 4 for length).");
-                //Console.WriteLine("Client: WriteMessageAsync: Message written and flushed.");
+                Console.WriteLine($"Client: WriteMessageAsync: Wrote {bytes.Length} bytes (plus 4 for length). Message type: {typeof(T).Name}.");
             }
         }
 
         private static async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
         {
-            //Console.WriteLine($"Client: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
+            Console.WriteLine($"Client: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
             int length;
             byte[] messageBytes;
 
-            // Use BinaryReader for ALL reads from the stream
             using (var br = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
             {
                 try
                 {
                     length = br.ReadInt32(); // Reads 4 bytes as int (little-endian by default)
+                    Console.WriteLine($"Client: ReadMessageAsync: Read message length: {length} bytes.");
                 }
                 catch (EndOfStreamException)
                 {
                     Console.Error.WriteLine("Client: ReadMessageAsync: End of stream reached while reading length.");
                     return default(T); // Pipe closed prematurely
                 }
-                //Console.WriteLine($"Client: ReadMessageAsync: Message length is {length} bytes.");
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Client: ReadMessageAsync: Error reading length: {ex.Message}");
+                    return default(T);
+                }
+
                 if (length <= 0) throw new IOException("Invalid message length.");
 
-                messageBytes = br.ReadBytes(length); // Reads the actual message payload
+                try
+                {
+                    messageBytes = br.ReadBytes(length); // Reads the actual message payload
+                    Console.WriteLine($"Client: ReadMessageAsync: Read {messageBytes.Length} bytes for message payload.");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Client: ReadMessageAsync: Error reading message payload: {ex.Message}");
+                    throw new IOException("Pipe closed prematurely or failed to read full message.", ex);
+                }
+
                 if (messageBytes.Length != length)
                 {
                     throw new IOException("Pipe closed prematurely or failed to read full message.");
@@ -283,7 +301,7 @@ namespace net.ninebroadcast.engineering.sudo
 
             using (var ms = new MemoryStream(messageBytes))
             {
-                //Console.WriteLine("Client: ReadMessageAsync: Deserializing message.");
+                Console.WriteLine($"Client: ReadMessageAsync: Deserializing message of type {typeof(T).Name}.");
                 return await JsonSerializer.DeserializeAsync<T>(ms, options);
             }
         }

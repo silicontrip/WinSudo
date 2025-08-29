@@ -129,7 +129,6 @@ namespace net.ninebroadcast.engineering.sudo
             {
                 if (clientToken != IntPtr.Zero) NativeMethods.CloseHandle(clientToken);
                 if (userToken != IntPtr.Zero) NativeMethods.CloseHandle(userToken);
-                sudoProcess?.Dispose();
                 _commandPipe.Dispose(); // Ensure the command pipe is always disposed.
             }
         }
