@@ -110,7 +110,7 @@ namespace net.ninebroadcast.engineering.sudo
 
         private static async Task HandleIoForwarding(SudoServerResponse successData)
         {
-            Console.WriteLine("Client: Entering HandleIoForwarding.");
+            //Console.WriteLine("Client: Entering HandleIoForwarding.");
             NamedPipeClientStream stdinPipe = null; // Declare outside try-block for finally access
             try
             {
@@ -228,7 +228,7 @@ namespace net.ninebroadcast.engineering.sudo
 
         private static async Task WriteMessageAsync<T>(Stream stream, T message, JsonSerializerOptions options)
         {
-            Console.WriteLine($"Client: WriteMessageAsync: Attempting to serialize message of type {typeof(T).Name}.");
+            //Console.WriteLine($"Client: WriteMessageAsync: Attempting to serialize message of type {typeof(T).Name}.");
             using (var ms = new MemoryStream())
             {
                 await JsonSerializer.SerializeAsync(ms, message, options);
@@ -241,14 +241,14 @@ namespace net.ninebroadcast.engineering.sudo
                     bw.Write(bytes);        // Writes the actual message payload
                     bw.Flush();             // Ensure all buffered data is written to the underlying stream
                 }
-                Console.WriteLine($"Client: WriteMessageAsync: Writing {bytes.Length} bytes (plus 4 for length).");
-                Console.WriteLine("Client: WriteMessageAsync: Message written and flushed.");
+                //Console.WriteLine($"Client: WriteMessageAsync: Writing {bytes.Length} bytes (plus 4 for length).");
+                //Console.WriteLine("Client: WriteMessageAsync: Message written and flushed.");
             }
         }
 
         private static async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
         {
-            Console.WriteLine($"Client: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
+            //Console.WriteLine($"Client: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
             int length;
             byte[] messageBytes;
 
@@ -261,10 +261,10 @@ namespace net.ninebroadcast.engineering.sudo
                 }
                 catch (EndOfStreamException)
                 {
-                    Console.WriteLine("Client: ReadMessageAsync: End of stream reached while reading length.");
+                    Console.Error.WriteLine("Client: ReadMessageAsync: End of stream reached while reading length.");
                     return default(T); // Pipe closed prematurely
                 }
-                Console.WriteLine($"Client: ReadMessageAsync: Message length is {length} bytes.");
+                //Console.WriteLine($"Client: ReadMessageAsync: Message length is {length} bytes.");
                 if (length <= 0) throw new IOException("Invalid message length.");
 
                 messageBytes = br.ReadBytes(length); // Reads the actual message payload
@@ -276,7 +276,7 @@ namespace net.ninebroadcast.engineering.sudo
 
             using (var ms = new MemoryStream(messageBytes))
             {
-                Console.WriteLine("Client: ReadMessageAsync: Deserializing message.");
+                //Console.WriteLine("Client: ReadMessageAsync: Deserializing message.");
                 return await JsonSerializer.DeserializeAsync<T>(ms, options);
             }
         }
