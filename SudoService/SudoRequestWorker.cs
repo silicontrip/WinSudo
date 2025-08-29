@@ -272,7 +272,10 @@ namespace net.ninebroadcast.engineering.sudo
                 return IntPtr.Zero;
             }
 
-            if (IsClientAdmin(clientToken))
+            bool clientIsAdmin = IsClientAdmin(clientToken);
+            Log($"GetSuTokenAsync: IsClientAdmin returned: {clientIsAdmin}"); // Add this log
+
+            if (clientIsAdmin)
             {
                 Log($"GetSuTokenAsync: Client is admin. Attempting passwordless logon for user: {request.TargetUser}, domain: . , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_BATCH}");
                 if (NativeMethods.LogonUserW(request.TargetUser, ".", "", NativeMethods.LogonType.LOGON32_LOGON_BATCH, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hToken))
@@ -336,19 +339,60 @@ namespace net.ninebroadcast.engineering.sudo
 
         private bool IsClientAdmin(IntPtr clientToken)
         {
-            var adminSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-            byte[] adminSidBytes = new byte[adminSid.BinaryLength];
-            adminSid.GetBinaryForm(adminSidBytes, 0);
-            IntPtr pAdminSid = Marshal.AllocHGlobal(adminSidBytes.Length);
-            Marshal.Copy(adminSidBytes, 0, pAdminSid, adminSidBytes.Length);
+            Log($"IsClientAdmin: Checking token {clientToken} for admin membership using impersonation.");
+            IntPtr duplicatedToken = IntPtr.Zero;
+            WindowsImpersonationContext impersonationContext = null;
+            NativeMethods.SECURITY_ATTRIBUTES sa = new NativeMethods.SECURITY_ATTRIBUTES();
+            sa.nLength = Marshal.SizeOf(sa);
+            sa.bInheritHandle = false;
+            sa.lpSecurityDescriptor = IntPtr.Zero; // Explicitly set to null
+
             try
             {
-                if (NativeMethods.CheckTokenMembership(clientToken, pAdminSid, out bool isAdmin)) return isAdmin;
+                // Duplicate the client token for impersonation
+                if (!NativeMethods.DuplicateTokenEx(
+                    clientToken,
+                    NativeMethods.TokenAccessFlags.TOKEN_QUERY | NativeMethods.TokenAccessFlags.TOKEN_IMPERSONATE,
+                    ref sa, // Pass the SECURITY_ATTRIBUTES struct by reference
+                    NativeMethods.SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
+                    NativeMethods.TOKEN_TYPE.TokenImpersonation,
+                    out duplicatedToken))
+                {
+                    Log($"IsClientAdmin: DuplicateTokenEx failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                // Create a WindowsIdentity from the duplicated token
+                using (WindowsIdentity clientIdentity = new WindowsIdentity(duplicatedToken))
+                {
+                    // Impersonate the client
+                    impersonationContext = clientIdentity.Impersonate();
+
+                    // Check if the impersonated user is in the Administrators role
+                    WindowsPrincipal principal = new WindowsPrincipal(clientIdentity);
+                    bool isAdmin = principal.IsInRole(WindowsBuiltInRole.Administrator);
+
+                    Log($"IsClientAdmin: Impersonated client is administrator: {isAdmin}.");
+                    return isAdmin;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"ERROR: IsClientAdmin: Exception during impersonation check: {ex.Message}, LastWin32Error: {Marshal.GetLastWin32Error()}");
                 return false;
             }
             finally
             {
-                Marshal.FreeHGlobal(pAdminSid);
+                if (impersonationContext != null)
+                {
+                    impersonationContext.Undo(); // Revert impersonation
+                    Log("IsClientAdmin: Impersonation reverted.");
+                }
+                if (duplicatedToken != IntPtr.Zero)
+                {
+                    NativeMethods.CloseHandle(duplicatedToken); // Close the duplicated token handle
+                    Log("IsClientAdmin: Duplicated token handle closed.");
+                }
             }
         }
 
