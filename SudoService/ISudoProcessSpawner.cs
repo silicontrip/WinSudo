@@ -24,6 +24,5 @@ namespace net.ninebroadcast.engineering.sudo
     public class ProcessSpawnerOptions
     {
         public string WorkingDirectory { get; set; } = "C:\\";
-        public uint? TargetSessionId { get; set; }
     }
 }

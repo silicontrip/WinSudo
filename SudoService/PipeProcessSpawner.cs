@@ -35,7 +35,6 @@ namespace net.ninebroadcast.engineering.sudo
             NamedPipeServerStream stderrPipeServer = null!;
 
             System.Diagnostics.Process childProcess = null!;
-            IntPtr processTokenToUse = userToken;
 
             try
             {
@@ -59,33 +58,7 @@ namespace net.ninebroadcast.engineering.sudo
 
                 // 4. Launch the child process using CreateProcessAsUser.
                 var creationFlags = NativeMethods.CreationFlags.CREATE_UNICODE_ENVIRONMENT | NativeMethods.CreationFlags.CREATE_NO_WINDOW;
-
-                
-
-                if (options.TargetSessionId.HasValue)
-                {
-                    Log($"PipeProcessSpawner: Attempting to get token for session ID: {options.TargetSessionId.Value}");
-                    IntPtr sessionToken = IntPtr.Zero;
-                    // WTSQueryUserToken requires SeAssignPrimaryTokenPrivilege and SeIncreaseQuotaPrivilege
-                    // These should be enabled in the SudoService process if it's running with sufficient privileges.
-                    if (NativeMethods.WTSQueryUserToken(options.TargetSessionId.Value, out sessionToken))
-                    {
-                        Log($"PipeProcessSpawner: Successfully obtained token for session ID {options.TargetSessionId.Value}. Token: {sessionToken}");
-                        processTokenToUse = sessionToken;
-                        // Add DETACHED_PROCESS to creationFlags if targeting a different session
-                        // This prevents the new process from inheriting the console of the calling process.
-                        creationFlags |= NativeMethods.CreationFlags.DETACHED_PROCESS;
-                    }
-                    else
-                    {
-                        int lastError = Marshal.GetLastWin32Error();
-                        Log($"ERROR: PipeProcessSpawner: WTSQueryUserToken failed for session ID {options.TargetSessionId.Value}. LastWin32Error: {lastError}");
-                        // Fallback to original userToken if session token cannot be obtained
-                        // Or throw an exception if targeting a session is mandatory. For now, fallback.
-                    }
-                }
-
-                if (!NativeMethods.CreateProcessAsUser(processTokenToUse, null, command, ref sa, ref sa, true, creationFlags, IntPtr.Zero, options.WorkingDirectory, ref startInfo, out var processInfo))
+                if (!NativeMethods.CreateProcessAsUser(userToken, null, command, ref sa, ref sa, true, creationFlags, IntPtr.Zero, options.WorkingDirectory, ref startInfo, out var processInfo))
                 {
                     throw new System.ComponentModel.Win32Exception();
                 }
@@ -141,14 +114,6 @@ namespace net.ninebroadcast.engineering.sudo
                 stderrPipeServer?.Dispose();
                 childProcess?.Dispose();
                 throw;
-            }
-            finally
-            {
-                // Close the sessionToken if it was obtained and is different from the original userToken
-                if (options.TargetSessionId.HasValue && processTokenToUse != userToken && processTokenToUse != IntPtr.Zero)
-                {
-                    NativeMethods.CloseHandle(processTokenToUse);
-                }
             }
         }
 
