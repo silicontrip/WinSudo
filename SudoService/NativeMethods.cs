@@ -8,6 +8,11 @@ namespace net.ninebroadcast.engineering.sudo
     {
         public static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
 
+        // Privilege Constants
+        public const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+        public const string SE_SECURITY_NAME = "SeSecurityPrivilege";
+        public const string SE_DEBUG_NAME = "SeDebugPrivilege";
+
         // Security Descriptor Revision
         public const uint SDDL_REVISION_1 = 1;
 
@@ -23,6 +28,34 @@ namespace net.ninebroadcast.engineering.sudo
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct LUID
+        {
+            public uint LowPart;
+            public int HighPart;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID_AND_ATTRIBUTES
+        {
+            public LUID Luid;
+            public uint Attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_PRIVILEGES
+        {
+            public uint PrivilegeCount;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)] // Assuming one privilege for simplicity
+            public LUID_AND_ATTRIBUTES[] Privileges;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_ELEVATION
+        {
+            public int TokenIsElevated;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct TOKEN_LINKED_TOKEN
         {
             public IntPtr LinkedToken;
@@ -32,6 +65,14 @@ namespace net.ninebroadcast.engineering.sudo
         public struct TOKEN_USER
         {
             public SID_AND_ATTRIBUTES User;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_GROUPS
+        {
+            public uint GroupCount;
+            // Use IntPtr for the array of SID_AND_ATTRIBUTES, as its size is dynamic
+            public IntPtr Groups;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -198,6 +239,13 @@ namespace net.ninebroadcast.engineering.sudo
             SecurityDelegation
         }
 
+        public enum TOKEN_ELEVATION_TYPE
+        {
+            TokenElevationTypeDefault = 1,
+            TokenElevationTypeLimited = 2,
+            TokenElevationTypeFull = 3
+        }
+
         public enum SID_NAME_USE
         {
             SidTypeUser = 1,
@@ -327,9 +375,39 @@ namespace net.ninebroadcast.engineering.sudo
             out uint SecurityDescriptorSize
         );
 
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool LookupAccountName(
+            string? lpSystemName,
+            string lpAccountName,
+            IntPtr Sid,
+            ref uint cbSid,
+            System.Text.StringBuilder? ReferencedDomainName,
+            ref uint cchReferencedDomainName,
+            out SID_NAME_USE peUse);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool EqualSid(IntPtr pSid1, IntPtr pSid2);
+
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr LocalFree(IntPtr hMem);
 
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr GetCurrentProcess();
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool LookupPrivilegeValue(string? lpSystemName, string lpName, out LUID lpLuid);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, [MarshalAs(UnmanagedType.Bool)] bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+
+        [DllImport("wtsapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool WTSQueryUserToken(uint SessionId, out IntPtr phToken);
 
         #endregion
     }

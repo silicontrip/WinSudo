@@ -192,10 +192,9 @@ namespace net.ninebroadcast.engineering.sudo
                             }
                             break;
                         case "/s":
-                            // TODO: Implement session parsing
-                            if (i + 1 < args.Length)
+                            if (i + 1 < args.Length && uint.TryParse(args[++i], out uint sessionId))
                             {
-                                // request.SessionDescriptor = args[++i];
+                                request.TargetSessionId = sessionId;
                             }
                             else
                             {
@@ -278,7 +277,7 @@ namespace net.ninebroadcast.engineering.sudo
 
         private static void ShowUsage()
         {
-            Console.WriteLine("Usage: sudo.exe [/u <user>] [/s <session>] <command_to_run>");
+            Console.WriteLine("Usage: sudo.exe [/u <user>] [/s <session_id>] <command_to_run>");
         }
 
         private static string ReadPassword()

@@ -74,7 +74,7 @@ namespace net.ninebroadcast.engineering.sudo
                     return; // Auth failed, response already sent.
                 }
         
-                var options = new ProcessSpawnerOptions { WorkingDirectory = "C:\\" };
+                var options = new ProcessSpawnerOptions { WorkingDirectory = "C:\\", TargetSessionId = request.TargetSessionId };
                 sudoProcess = _processSpawner.Spawn(userToken, request.Command, options);
         
                 var successResponse = new SudoServerResponse
@@ -273,21 +273,104 @@ namespace net.ninebroadcast.engineering.sudo
             }
 
             bool clientIsAdmin = IsClientAdmin(clientToken);
-            Log($"GetSuTokenAsync: IsClientAdmin returned: {clientIsAdmin}"); // Add this log
+            Log($"GetSuTokenAsync: IsClientAdmin returned: {clientIsAdmin}");
 
-            if (clientIsAdmin)
+            // Get SID of the client token's user
+            IntPtr clientUserSid = IntPtr.Zero;
+            try
             {
-                Log($"GetSuTokenAsync: Client is admin. Attempting passwordless logon for user: {request.TargetUser}, domain: . , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_BATCH}");
-                if (NativeMethods.LogonUserW(request.TargetUser, ".", "", NativeMethods.LogonType.LOGON32_LOGON_BATCH, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hToken))
-                {
-                    Log($"GetSuTokenAsync: Passwordless logon successful for {request.TargetUser}. Token: {hToken}");
-                    return hToken;
-                }
-                int lastError = Marshal.GetLastWin32Error();
-                Log($"ERROR: GetSuTokenAsync: Passwordless logon failed for {request.TargetUser}. LastWin32Error: {lastError}");
-                await SendErrorResponse("error", $"Passwordless su failed. Win32 Error: {lastError}");
+                uint tokenInfoLength = 0;
+                NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenUser, IntPtr.Zero, tokenInfoLength, out tokenInfoLength);
+                IntPtr pUser = Marshal.AllocHGlobal((int)tokenInfoLength);
+                if (!NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenUser, pUser, tokenInfoLength, out tokenInfoLength)) throw new System.ComponentModel.Win32Exception();
+                var tokenUser = (NativeMethods.TOKEN_USER)Marshal.PtrToStructure(pUser, typeof(NativeMethods.TOKEN_USER))!;
+                clientUserSid = tokenUser.User.Sid;
+                Marshal.FreeHGlobal(pUser); // Free the allocated memory for pUser
+            }
+            catch (Exception ex)
+            {
+                Log($"ERROR: GetSuTokenAsync: Failed to get client user SID: {ex.Message}");
+                await SendErrorResponse("error", $"Failed to get client user SID: {ex.Message}");
                 return IntPtr.Zero;
             }
+
+            // Get SID of the target user
+            IntPtr targetUserSid = IntPtr.Zero;
+            try
+            {
+                uint sidSize = 0;
+                uint domainSize = 0;
+                NativeMethods.SID_NAME_USE sidUse;
+                StringBuilder domainName = new StringBuilder();
+
+                // First call to get buffer sizes
+                NativeMethods.LookupAccountName(null, request.TargetUser, IntPtr.Zero, ref sidSize, domainName, ref domainSize, out sidUse);
+
+                targetUserSid = Marshal.AllocHGlobal((int)sidSize);
+                domainName = new StringBuilder((int)domainSize);
+
+                // Second call to get the actual SID
+                if (!NativeMethods.LookupAccountName(null, request.TargetUser, targetUserSid, ref sidSize, domainName, ref domainSize, out sidUse))
+                {
+                    Log($"ERROR: GetSuTokenAsync: LookupAccountName for {request.TargetUser} failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    await SendErrorResponse("error", $"Failed to resolve target user: {request.TargetUser}. Win32 Error: {Marshal.GetLastWin32Error()}");
+                    return IntPtr.Zero;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"ERROR: GetSuTokenAsync: Failed to get target user SID: {ex.Message}");
+                await SendErrorResponse("error", $"Failed to get target user SID: {ex.Message}");
+                return IntPtr.Zero;
+            }
+
+            // Compare SIDs
+            bool isSameUser = NativeMethods.EqualSid(clientUserSid, targetUserSid);
+            Marshal.FreeHGlobal(targetUserSid); // Free targetUserSid as it's no longer needed
+
+            if (clientIsAdmin && isSameUser)
+            {
+                Log($"GetSuTokenAsync: Client is admin and target user is same. Returning client token.");
+                // If the client is an admin and wants to su to themselves, return their token.
+                // We can return the original clientToken or its elevated version if needed.
+                // For now, just return the clientToken.
+                return clientToken;
+            }
+            else if (clientIsAdmin && !isSameUser)
+            {
+                // If client is admin but wants to su to a different user,
+                // check if it's a well-known non-interactive account.
+                Log($"GetSuTokenAsync: Client is admin but target user is different. Checking for well-known non-interactive user.");
+
+                string targetUserNameLower = request.TargetUser.ToLowerInvariant();
+                if (targetUserNameLower == "system" || targetUserNameLower == "nt authority\\system" ||
+                    targetUserNameLower == "network service" || targetUserNameLower == "nt authority\\network service" ||
+                    targetUserNameLower == "local service" || targetUserNameLower == "nt authority\\local service")
+                {
+                    Log($"GetSuTokenAsync: Attempting to get token for well-known user: {request.TargetUser}");
+                    IntPtr wellKnownUserToken = GetTokenForWellKnownUser(request.TargetUser);
+                    if (wellKnownUserToken != IntPtr.Zero)
+                    {
+                        Log($"GetSuTokenAsync: Successfully obtained token for {request.TargetUser} without password.");
+                        return wellKnownUserToken;
+                    }
+                    else
+                    {
+                        Log($"GetSuTokenAsync: Failed to get token for {request.TargetUser} without password. Falling back to password authentication.");
+                    }
+                }
+                else
+                {
+                    Log($"GetSuTokenAsync: Target user {request.TargetUser} is not a well-known non-interactive user. Proceeding with password authentication.");
+                }
+            }
+            else
+            {
+                // Client is not admin, proceed with password authentication.
+                Log($"GetSuTokenAsync: Client is not admin. Proceeding with password authentication for {request.TargetUser}.");
+            }
+
+            // Proceed with password authentication for target user
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
             Log("GetSuTokenAsync: Sending authentication challenge to client.");
             await WriteMessageAsync(_commandPipe, challengeResponse, _jsonOptions);
@@ -325,7 +408,7 @@ namespace net.ninebroadcast.engineering.sudo
                 domain = "."; // Or string.Empty, depending on desired behavior for local accounts
             }
 
-            Log($"GetSuTokenAsync: Client is not admin. Attempting interactive logon for user: {username}, domain: {domain} , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
+            Log($"GetSuTokenAsync: Attempting interactive logon for user: {username}, domain: {domain} , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
             if (NativeMethods.LogonUserW(username, domain, authRequest.Password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hSuToken))
             {
                 Log($"GetSuTokenAsync: Interactive logon successful for {request.TargetUser}. Token: {hSuToken}");
@@ -339,59 +422,75 @@ namespace net.ninebroadcast.engineering.sudo
 
         private bool IsClientAdmin(IntPtr clientToken)
         {
-            Log($"IsClientAdmin: Checking token {clientToken} for admin membership using impersonation.");
-            IntPtr duplicatedToken = IntPtr.Zero;
-            WindowsImpersonationContext impersonationContext = null;
-            NativeMethods.SECURITY_ATTRIBUTES sa = new NativeMethods.SECURITY_ATTRIBUTES();
-            sa.nLength = Marshal.SizeOf(sa);
-            sa.bInheritHandle = false;
-            sa.lpSecurityDescriptor = IntPtr.Zero; // Explicitly set to null
+            Log($"IsClientAdmin: Checking token {clientToken} for elevated administrator privileges.");
+            uint returnLength = 0;
+            IntPtr pElevationType = IntPtr.Zero;
+            IntPtr pElevation = IntPtr.Zero;
+            bool isElevated = false;
 
             try
             {
-                // Duplicate the client token for impersonation
-                if (!NativeMethods.DuplicateTokenEx(
-                    clientToken,
-                    NativeMethods.TokenAccessFlags.TOKEN_QUERY | NativeMethods.TokenAccessFlags.TOKEN_IMPERSONATE,
-                    ref sa, // Pass the SECURITY_ATTRIBUTES struct by reference
-                    NativeMethods.SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
-                    NativeMethods.TOKEN_TYPE.TokenImpersonation,
-                    out duplicatedToken))
+                // Get TokenElevationType
+                NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenElevationType, IntPtr.Zero, 0, out returnLength);
+                pElevationType = Marshal.AllocHGlobal((int)returnLength);
+                if (!NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenElevationType, pElevationType, returnLength, out returnLength))
                 {
-                    Log($"IsClientAdmin: DuplicateTokenEx failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    Log($"IsClientAdmin: GetTokenInformation (TokenElevationType) failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
                     return false;
                 }
+                NativeMethods.TOKEN_ELEVATION_TYPE elevationType = (NativeMethods.TOKEN_ELEVATION_TYPE)Marshal.ReadInt32(pElevationType);
+                Log($"IsClientAdmin: TokenElevationType: {elevationType}");
 
-                // Create a WindowsIdentity from the duplicated token
-                using (WindowsIdentity clientIdentity = new WindowsIdentity(duplicatedToken))
+                // If elevation type is full, it's elevated. If limited, it's not. Default means no UAC or not an admin.
+                // If elevation type is full or limited, it's considered an administrator for this check.
+                // Limited means the user is an admin, but running non-elevated.
+                if (elevationType == NativeMethods.TOKEN_ELEVATION_TYPE.TokenElevationTypeFull ||
+                    elevationType == NativeMethods.TOKEN_ELEVATION_TYPE.TokenElevationTypeLimited)
                 {
-                    // Impersonate the client
-                    impersonationContext = clientIdentity.Impersonate();
-
-                    // Check if the impersonated user is in the Administrators role
-                    WindowsPrincipal principal = new WindowsPrincipal(clientIdentity);
-                    bool isAdmin = principal.IsInRole(WindowsBuiltInRole.Administrator);
-
-                    Log($"IsClientAdmin: Impersonated client is administrator: {isAdmin}.");
-                    return isAdmin;
+                    isElevated = true;
                 }
+                else if (elevationType == NativeMethods.TOKEN_ELEVATION_TYPE.TokenElevationTypeDefault)
+                {
+                    // Default token type. This means UAC is off, or the user is not an admin.
+                    // In this case, we need to check if the user is actually an admin.
+                    // We can fall back to CheckTokenMembership here, or assume non-elevated if UAC is on.
+                    // If UAC is off, then default means full admin.
+                    // The most reliable way to check if UAC is on is to check TokenElevation.
+                    NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenElevation, IntPtr.Zero, 0, out returnLength);
+                    pElevation = Marshal.AllocHGlobal((int)returnLength);
+                    if (!NativeMethods.GetTokenInformation(clientToken, NativeMethods.TOKEN_INFORMATION_CLASS.TokenElevation, pElevation, returnLength, out returnLength))
+                    {
+                        Log($"IsClientAdmin: GetTokenInformation (TokenElevation) failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                        return false;
+                    }
+                    NativeMethods.TOKEN_ELEVATION elevation = (NativeMethods.TOKEN_ELEVATION)Marshal.PtrToStructure(pElevation, typeof(NativeMethods.TOKEN_ELEVATION))!;
+                    if (elevation.TokenIsElevated != 0)
+                    {
+                        isElevated = true;
+                    }
+                    else
+                    {
+                        isElevated = false;
+                    }
+                }
+
+                Log($"IsClientAdmin: Client is running with elevated administrator privileges: {isElevated}.");
+                return isElevated;
             }
             catch (Exception ex)
             {
-                Log($"ERROR: IsClientAdmin: Exception during impersonation check: {ex.Message}, LastWin32Error: {Marshal.GetLastWin32Error()}");
+                Log($"ERROR: IsClientAdmin: Exception during elevated privilege check: {ex.Message}, LastWin32Error: {Marshal.GetLastWin32Error()}");
                 return false;
             }
             finally
             {
-                if (impersonationContext != null)
+                if (pElevationType != IntPtr.Zero)
                 {
-                    impersonationContext.Undo(); // Revert impersonation
-                    Log("IsClientAdmin: Impersonation reverted.");
+                    Marshal.FreeHGlobal(pElevationType);
                 }
-                if (duplicatedToken != IntPtr.Zero)
+                if (pElevation != IntPtr.Zero)
                 {
-                    NativeMethods.CloseHandle(duplicatedToken); // Close the duplicated token handle
-                    Log("IsClientAdmin: Duplicated token handle closed.");
+                    Marshal.FreeHGlobal(pElevation);
                 }
             }
         }
@@ -507,6 +606,115 @@ namespace net.ninebroadcast.engineering.sudo
             Console.WriteLine("Server: Error response sent and pipe drained.");
         }
 
+        private IntPtr GetTokenForWellKnownUser(string targetUserName)
+        {
+            string normalizedTargetUser = targetUserName.ToLowerInvariant();
+
+            // Case 1: Target is SYSTEM
+            if (normalizedTargetUser == "system" || normalizedTargetUser == "nt authority\\system")
+            {
+                if (IsCurrentProcessSystem())
+                {
+                    Log("GetTokenForWellKnownUser: Current process is SYSTEM. Duplicating own token.");
+                    IntPtr hCurrentProcessToken = IntPtr.Zero;
+                    IntPtr duplicatedToken = IntPtr.Zero;
+
+                    if (!NativeMethods.OpenProcessToken(NativeMethods.GetCurrentProcess(),
+                                                        NativeMethods.TokenAccessFlags.TOKEN_DUPLICATE | NativeMethods.TokenAccessFlags.TOKEN_ASSIGN_PRIMARY | NativeMethods.TokenAccessFlags.TOKEN_QUERY,
+                                                        out hCurrentProcessToken))
+                    {
+                        Log($"ERROR: GetTokenForWellKnownUser: OpenProcessToken for current process failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                        return IntPtr.Zero;
+                    }
+
+                    try
+                    {
+                        var sa = new NativeMethods.SECURITY_ATTRIBUTES();
+                        sa.nLength = Marshal.SizeOf(sa);
+                        sa.bInheritHandle = false;
+
+                        if (NativeMethods.DuplicateTokenEx(hCurrentProcessToken,
+                                                           NativeMethods.TokenAccessFlags.TOKEN_ALL_ACCESS,
+                                                           ref sa,
+                                                           NativeMethods.SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
+                                                           NativeMethods.TOKEN_TYPE.TokenPrimary,
+                                                           out duplicatedToken))
+                        {
+                            Log($"GetTokenForWellKnownUser: Successfully duplicated current process token for SYSTEM.");
+                            return duplicatedToken;
+                        }
+                        else
+                        {
+                            Log($"ERROR: GetTokenForWellKnownUser: DuplicateTokenEx for current process token failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                            return IntPtr.Zero;
+                        }
+                    }
+                    finally
+                    {
+                        if (hCurrentProcessToken != IntPtr.Zero) NativeMethods.CloseHandle(hCurrentProcessToken);
+                    }
+                }
+                else
+                {
+                    Log("GetTokenForWellKnownUser: Current process is not SYSTEM. Cannot directly get SYSTEM token without password.");
+                    return IntPtr.Zero;
+                }
+            }
+            // Case 2: Target is NETWORK SERVICE or LOCAL SERVICE
+            else if (normalizedTargetUser == "network service" || normalizedTargetUser == "nt authority\\network service" ||
+                     normalizedTargetUser == "local service" || normalizedTargetUser == "nt authority\\local service")
+            {
+                // Enable necessary privileges for LogonUser with service accounts
+                if (!EnablePrivilege("SeAssignPrimaryTokenPrivilege") || !EnablePrivilege("SeIncreaseQuotaPrivilege"))
+                {
+                    Log($"GetTokenForWellKnownUser: Failed to enable required privileges for {targetUserName}.");
+                    return IntPtr.Zero;
+                }
+
+                string username;
+                string domain;
+
+                int backslashIndex = targetUserName.IndexOf('\\');
+                if (backslashIndex != -1)
+                {
+                    domain = targetUserName.Substring(0, backslashIndex);
+                    username = targetUserName.Substring(backslashIndex + 1);
+                }
+                else
+                {
+                    username = targetUserName;
+                    domain = "NT AUTHORITY"; // For well-known service accounts
+                }
+
+                Log($"GetTokenForWellKnownUser: Attempting LogonUser for service account: {username}, domain: {domain}");
+                IntPtr hServiceToken = IntPtr.Zero;
+                // Use LOGON32_LOGON_SERVICE for service accounts
+                if (NativeMethods.LogonUserW(username, domain, null, NativeMethods.LogonType.LOGON32_LOGON_SERVICE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out hServiceToken))
+                {
+                    Log($"GetTokenForWellKnownUser: LogonUser successful for {targetUserName}. Token: {hServiceToken}");
+                    return hServiceToken;
+                }
+                else
+                {
+                    Log($"ERROR: GetTokenForWellKnownUser: LogonUser failed for {targetUserName}. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    return IntPtr.Zero;
+                }
+            }
+            else
+            {
+                Log($"GetTokenForWellKnownUser: Target user {targetUserName} is not a recognized well-known non-interactive account for passwordless logon.");
+                return IntPtr.Zero;
+            }
+        }
+
+        private bool IsCurrentProcessSystem()
+        {
+            using (WindowsIdentity current = WindowsIdentity.GetCurrent())
+            {
+                return current.User?.IsWellKnown(WellKnownSidType.LocalSystemSid) == true;
+            }
+        }
+
         private bool IsTokenAdmin(IntPtr token)
         {
             var adminSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
@@ -522,6 +730,51 @@ namespace net.ninebroadcast.engineering.sudo
             finally
             {
                 Marshal.FreeHGlobal(pAdminSid);
+            }
+        }
+
+        private bool EnablePrivilege(string privilegeName)
+        {
+            IntPtr hToken = IntPtr.Zero;
+            NativeMethods.LUID luid;
+
+            if (!NativeMethods.OpenProcessToken(NativeMethods.GetCurrentProcess(),
+                                                NativeMethods.TokenAccessFlags.TOKEN_ADJUST_PRIVILEGES | NativeMethods.TokenAccessFlags.TOKEN_QUERY,
+                                                out hToken))
+            {
+                Log($"EnablePrivilege: OpenProcessToken failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                return false;
+            }
+
+            try
+            {
+                if (!NativeMethods.LookupPrivilegeValue(null, privilegeName, out luid))
+                {
+                    Log($"EnablePrivilege: LookupPrivilegeValue for {privilegeName} failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                NativeMethods.TOKEN_PRIVILEGES tp = new NativeMethods.TOKEN_PRIVILEGES();
+                tp.PrivilegeCount = 1;
+                tp.Privileges = new NativeMethods.LUID_AND_ATTRIBUTES[1];
+                tp.Privileges[0].Luid = luid;
+                tp.Privileges[0].Attributes = NativeMethods.SE_PRIVILEGE_ENABLED;
+
+                if (!NativeMethods.AdjustTokenPrivileges(hToken, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero))
+                {
+                    Log($"EnablePrivilege: AdjustTokenPrivileges for {privilegeName} failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    return false;
+                }
+
+                Log($"EnablePrivilege: Successfully enabled privilege: {privilegeName}");
+                return true;
+            }
+            finally
+            {
+                if (hToken != IntPtr.Zero)
+                {
+                    NativeMethods.CloseHandle(hToken);
+                }
             }
         }
 
