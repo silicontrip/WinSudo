@@ -223,39 +223,55 @@ namespace net.ninebroadcast.engineering.sudo
 
         private static async Task WriteMessageAsync<T>(Stream stream, T message, JsonSerializerOptions options)
         {
+            Console.WriteLine($"Client: WriteMessageAsync: Attempting to serialize message of type {typeof(T).Name}.");
             using (var ms = new MemoryStream())
             {
                 await JsonSerializer.SerializeAsync(ms, message, options);
                 var bytes = ms.ToArray();
-                var lengthBytes = BitConverter.GetBytes(bytes.Length);
 
-                await stream.WriteAsync(lengthBytes, 0, lengthBytes.Length);
-                await stream.WriteAsync(bytes, 0, bytes.Length);
-                await stream.FlushAsync();
+                // Use BinaryWriter for ALL writes to the stream
+                using (var bw = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+                {
+                    bw.Write(bytes.Length); // Writes the 4-byte length prefix
+                    bw.Write(bytes);        // Writes the actual message payload
+                    bw.Flush();             // Ensure all buffered data is written to the underlying stream
+                }
+                Console.WriteLine($"Client: WriteMessageAsync: Writing {bytes.Length} bytes (plus 4 for length).");
+                Console.WriteLine("Client: WriteMessageAsync: Message written and flushed.");
             }
         }
 
         private static async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
         {
-            var lengthBytes = new byte[4];
-            var bytesRead = await stream.ReadAsync(lengthBytes, 0, lengthBytes.Length);
-            if (bytesRead == 0) return default(T);
-            if (bytesRead != 4) throw new IOException("Failed to read message length.");
+            Console.WriteLine($"Client: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
+            int length;
+            byte[] messageBytes;
 
-            var length = BitConverter.ToInt32(lengthBytes, 0);
-            if (length <= 0) throw new IOException("Invalid message length.");
-
-            var messageBytes = new byte[length];
-            bytesRead = 0;
-            while (bytesRead < length)
+            // Use BinaryReader for ALL reads from the stream
+            using (var br = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
             {
-                var currentRead = await stream.ReadAsync(messageBytes, bytesRead, length - bytesRead);
-                if (currentRead == 0) throw new IOException("Pipe closed prematurely.");
-                bytesRead += currentRead;
+                try
+                {
+                    length = br.ReadInt32(); // Reads 4 bytes as int (little-endian by default)
+                }
+                catch (EndOfStreamException)
+                {
+                    Console.WriteLine("Client: ReadMessageAsync: End of stream reached while reading length.");
+                    return default(T); // Pipe closed prematurely
+                }
+                Console.WriteLine($"Client: ReadMessageAsync: Message length is {length} bytes.");
+                if (length <= 0) throw new IOException("Invalid message length.");
+
+                messageBytes = br.ReadBytes(length); // Reads the actual message payload
+                if (messageBytes.Length != length)
+                {
+                    throw new IOException("Pipe closed prematurely or failed to read full message.");
+                }
             }
 
             using (var ms = new MemoryStream(messageBytes))
             {
+                Console.WriteLine("Client: ReadMessageAsync: Deserializing message.");
                 return await JsonSerializer.DeserializeAsync<T>(ms, options);
             }
         }

@@ -120,35 +120,52 @@ namespace net.ninebroadcast.engineering.sudo
             {
                 await JsonSerializer.SerializeAsync(ms, message, options);
                 var bytes = ms.ToArray();
-                var lengthBytes = BitConverter.GetBytes(bytes.Length);
 
-                await stream.WriteAsync(lengthBytes, 0, lengthBytes.Length);
-                await stream.WriteAsync(bytes, 0, bytes.Length);
-                await stream.FlushAsync();
+                Log($"Server: WriteMessageAsync: Attempting to write message of type {typeof(T).Name}.");
+                Log($"Server: WriteMessageAsync: Message payload length: {bytes.Length} bytes.");
+
+                // Use BinaryWriter for ALL writes to the stream
+                using (var bw = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+                {
+                    bw.Write(bytes.Length); // Writes the 4-byte length prefix
+                    bw.Write(bytes);        // Writes the actual message payload
+                    bw.Flush();             // Ensure all buffered data is written to the underlying stream
+                }
+                Log("Server: WriteMessageAsync: Message written and flushed.");
             }
         }
 
         private async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
         {
-            var lengthBytes = new byte[4];
-            var bytesRead = await stream.ReadAsync(lengthBytes, 0, lengthBytes.Length);
-            if (bytesRead == 0) return default(T);
-            if (bytesRead != 4) throw new IOException("Failed to read message length.");
+            Log($"Server: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
+            int length;
+            byte[] messageBytes;
 
-            var length = BitConverter.ToInt32(lengthBytes, 0);
-            if (length <= 0) throw new IOException("Invalid message length.");
-
-            var messageBytes = new byte[length];
-            bytesRead = 0;
-            while (bytesRead < length)
+            // Use BinaryReader for ALL reads from the stream
+            using (var br = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
             {
-                var currentRead = await stream.ReadAsync(messageBytes, bytesRead, length - bytesRead);
-                if (currentRead == 0) throw new IOException("Pipe closed prematurely.");
-                bytesRead += currentRead;
+                try
+                {
+                    length = br.ReadInt32(); // Reads 4 bytes as int (little-endian by default)
+                }
+                catch (EndOfStreamException)
+                {
+                    Log("Server: ReadMessageAsync: End of stream reached while reading length.");
+                    return default(T); // Pipe closed prematurely
+                }
+                Log($"Server: ReadMessageAsync: Message length is {length} bytes.");
+                if (length <= 0) throw new IOException("Invalid message length.");
+
+                messageBytes = br.ReadBytes(length); // Reads the actual message payload
+                if (messageBytes.Length != length)
+                {
+                    throw new IOException("Pipe closed prematurely or failed to read full message.");
+                }
             }
 
             using (var ms = new MemoryStream(messageBytes))
             {
+                Log("Server: ReadMessageAsync: Deserializing message.");
                 return await JsonSerializer.DeserializeAsync<T>(ms, options);
             }
         }
@@ -270,11 +287,11 @@ namespace net.ninebroadcast.engineering.sudo
             }
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
             Log("GetSuTokenAsync: Sending authentication challenge to client.");
-            await JsonSerializer.SerializeAsync(_commandPipe, challengeResponse, _jsonOptions);
+            await WriteMessageAsync(_commandPipe, challengeResponse, _jsonOptions);
             Log("GetSuTokenAsync: Authentication challenge sent. Waiting for pipe drain.");
             _commandPipe.WaitForPipeDrain();
             Log("GetSuTokenAsync: Pipe drained. Attempting to deserialize authentication request.");
-            var authRequest = await JsonSerializer.DeserializeAsync<SudoRequest>(_commandPipe, _jsonOptions);
+            var authRequest = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
             Log("GetSuTokenAsync: Authentication request deserialized.");
             if (authRequest == null)
             {
