@@ -396,5 +396,14 @@ namespace net.ninebroadcast.engineering.sudo
             await SendErrorResponse("authentication_failure", $"Invalid username or password. Win32 Error: {lastErrorAuth}");
             return IntPtr.Zero;
         }
+
+        private async Task SendErrorResponse(string status, string message)
+        {
+            Console.WriteLine($"Server: Sending error response - Status: {status}, Message: {message}");
+            var errorResponse = new SudoServerResponse { Status = status, ErrorMessage = message };
+            await WriteMessageAsync(_commandPipe, errorResponse, _jsonOptions);
+            _commandPipe.WaitForPipeDrain();
+            Console.WriteLine("Server: Error response sent and pipe drained.");
+        }
     }
 }
