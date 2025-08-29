@@ -40,6 +40,7 @@ namespace net.ninebroadcast.engineering.sudo
                 //Console.WriteLine("Server: HandleRequestAsync started.");
                 //Console.WriteLine("Server: Attempting to get client token...");
                 clientToken = GetClientToken();
+                uint clientSessionId = GetSessionIdFromToken(clientToken);
                 //Console.WriteLine("Server: Client token obtained. Attempting to deserialize request from pipe...");
                 var request = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
                 //Console.WriteLine("Server: Request deserialized from pipe.");
@@ -74,7 +75,8 @@ namespace net.ninebroadcast.engineering.sudo
                     return; // Auth failed, response already sent.
                 }
         
-                var options = new ProcessSpawnerOptions { WorkingDirectory = "C:\\" };
+                uint targetSessionId = request.SessionId ?? clientSessionId;
+                var options = new ProcessSpawnerOptions { WorkingDirectory = "C:\\", SessionId = targetSessionId };
                 sudoProcess = _processSpawner.Spawn(userToken, request.Command, options);
         
                 var successResponse = new SudoServerResponse
@@ -394,3 +396,5 @@ namespace net.ninebroadcast.engineering.sudo
             await SendErrorResponse("authentication_failure", $"Invalid username or password. Win32 Error: {lastErrorAuth}");
             return IntPtr.Zero;
         }
+    }
+}

@@ -197,10 +197,17 @@ namespace net.ninebroadcast.engineering.sudo
                             }
                             break;
                         case "/s":
-                            // TODO: Implement session parsing
                             if (i + 1 < args.Length)
                             {
-                                // request.SessionDescriptor = args[++i];
+                                if (uint.TryParse(args[++i], out uint sessionId))
+                                {
+                                    request.SessionId = sessionId;
+                                }
+                                else
+                                {
+                                    Console.Error.WriteLine($"Invalid session ID format: {args[i]}. Must be a positive integer.");
+                                    return null; // Invalid usage
+                                }
                             }
                             else
                             {

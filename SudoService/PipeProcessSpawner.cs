@@ -57,8 +57,25 @@ namespace net.ninebroadcast.engineering.sudo
                 sa.bInheritHandle = false; // We are explicitly managing handle inheritance.
 
                 // 4. Launch the child process using CreateProcessAsUser.
-                var creationFlags = NativeMethods.CreationFlags.CREATE_UNICODE_ENVIRONMENT | NativeMethods.CreationFlags.CREATE_NO_WINDOW;
+                var creationFlags = NativeMethods.CreationFlags.CREATE_UNICODE_ENVIRONMENT | NativeMethods.CreationFlags.CREATE_NO_WINDOW | NativeMethods.CreationFlags.CREATE_SUSPENDED;
                 if (!NativeMethods.CreateProcessAsUser(userToken, null, command, ref sa, ref sa, true, creationFlags, IntPtr.Zero, options.WorkingDirectory, ref startInfo, out var processInfo))
+                {
+                    throw new System.ComponentModel.Win32Exception();
+                }
+
+                // Set the session ID for the new process's primary token if specified
+                if (options.SessionId.HasValue)
+                {
+                    uint sessionId = options.SessionId.Value;
+                    if (!NativeMethods.SetTokenInformation(processInfo.hProcess, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(uint)))
+                    {
+                        // Log or handle error if setting session ID fails
+                        System.Diagnostics.Debug.WriteLine($"Failed to set session ID {sessionId} for new process. Error: {Marshal.GetLastWin32Error()}");
+                    }
+                }
+
+                // Resume the process's primary thread
+                NativeMethods.ResumeThread(processInfo.hThread);
                 {
                     throw new System.ComponentModel.Win32Exception();
                 }

@@ -13,6 +13,7 @@ namespace net.ninebroadcast.engineering.sudo
         public string? TargetUser { get; set; }
         public string? Password { get; set; } // Can be used for the auth challenge response
         public string SpawnerType { get; set; } = "pipe";
+        public uint? SessionId { get; set; }
     }
 
     /// <summary>
