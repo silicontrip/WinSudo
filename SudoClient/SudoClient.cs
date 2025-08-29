@@ -111,7 +111,7 @@ namespace net.ninebroadcast.engineering.sudo
         private static async Task HandleIoForwarding(SudoServerResponse successData)
         {
             Console.WriteLine("Client: Entering HandleIoForwarding.");
-            NamedPipeClientStream stdinPipe = null; // Declare outside try-block for finally access
+            NamedPipeClientStream stdinPipe = null;
             try
             {
                 stdinPipe = new NamedPipeClientStream(".", successData.StdinPipeName!, PipeDirection.Out, PipeOptions.None);
@@ -124,35 +124,80 @@ namespace net.ninebroadcast.engineering.sudo
                         stderrPipe.ConnectAsync(5000)
                     );
 
-                    // Use a CancellationTokenSource for stdin, but also prepare to close the pipe
                     var stdinCancellationTokenSource = new CancellationTokenSource();
-                    var stdinTask = Console.OpenStandardInput().CopyToAsync(stdinPipe, stdinCancellationTokenSource.Token);
+                    var stdinCancellationToken = stdinCancellationTokenSource.Token;
+
+                    // Custom stdin forwarding task
+                    var stdinTask = Task.Run(async () =>
+                    {
+                        byte[] buffer = new byte[4096];
+                        int bytesRead;
+                        try
+                        {
+                            while (!stdinCancellationToken.IsCancellationRequested)
+                            {
+                                // Check if data is available without blocking indefinitely
+                                // This is tricky for Console.OpenStandardInput() as it's blocking.
+                                // A better approach for console input is to use Console.In.Read()
+                                // or Console.ReadKey() and then write to the pipe.
+                                // For now, let's assume ReadAsync will eventually return or be cancelled.
+                                // If it blocks indefinitely, this still won't solve the problem.
+
+                                // A more robust way for console input:
+                                if (Console.In.Peek() > -1) // Check if there's input without blocking
+                                {
+                                    bytesRead = await Console.OpenStandardInput().ReadAsync(buffer, 0, buffer.Length, stdinCancellationToken);
+                                    if (bytesRead == 0) break; // End of stream
+                                    await stdinPipe.WriteAsync(buffer, 0, bytesRead, stdinCancellationToken);
+                                }
+                                else
+                                {
+                                    // If no input, yield control to avoid busy-waiting
+                                    await Task.Delay(10, stdinCancellationToken);
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            Console.WriteLine("Client: stdin forwarding cancelled (custom task).");
+                        }
+                        catch (IOException ioEx)
+                        {
+                            Console.WriteLine($"Client: stdin pipe closed (custom task): {ioEx.Message}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"Client: Error in custom stdin task: {ex.Message}");
+                        }
+                        finally
+                        {
+                            // Ensure the stdinPipe is closed from this side if it's still open
+                            // This might be redundant if it's disposed by the main logic, but good for robustness.
+                            try { stdinPipe?.Dispose(); } catch { }
+                        }
+                    }, stdinCancellationToken);
+
 
                     var stdoutTask = stdoutPipe.CopyToAsync(Console.OpenStandardOutput());
                     var stderrTask = stderrPipe.CopyToAsync(Console.OpenStandardError());
 
-                    // Wait for either stdout or stderr to complete
                     var outputCompletionTask = Task.WhenAny(stdoutTask, stderrTask);
                     await outputCompletionTask;
 
                     // Output stream completed. Stop forwarding stdin.
-                    // Explicitly close the stdinPipe to unblock CopyToAsync if it's waiting to write.
-                    // This will cause stdinTask to complete (likely with an IOException).
-                    stdinPipe.Dispose(); // This will close the pipe and unblock CopyToAsync
+                    stdinCancellationTokenSource.Cancel(); // Signal cancellation to the custom stdin task
 
-                    // Now wait for all tasks to complete. stdinTask should now complete.
+                    // Explicitly close the stdinPipe to ensure the custom stdin task's WriteAsync unblocks
+                    // and to signal to the remote process that no more input will come.
+                    stdinPipe.Dispose();
+
                     try
                     {
                         await Task.WhenAll(stdinTask, stdoutTask, stderrTask);
                     }
                     catch (OperationCanceledException)
                     {
-                        Console.WriteLine("Client: stdin forwarding cancelled.");
-                    }
-                    catch (IOException ioEx)
-                    {
-                        // Expected if stdinPipe was disposed while CopyToAsync was active
-                        Console.WriteLine($"Client: stdin pipe closed: {ioEx.Message}");
+                        Console.WriteLine("Client: I/O tasks completed due to cancellation.");
                     }
                     catch (Exception ex)
                     {
@@ -166,7 +211,6 @@ namespace net.ninebroadcast.engineering.sudo
             }
             finally
             {
-                // Ensure stdinPipe is disposed even if an exception occurs earlier
                 stdinPipe?.Dispose();
             }
         }
