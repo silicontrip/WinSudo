@@ -306,8 +306,24 @@ namespace net.ninebroadcast.engineering.sudo
                 return IntPtr.Zero;
             }
 
-            Log($"GetSuTokenAsync: Client is not admin. Attempting interactive logon for user: {request.TargetUser}, domain: . , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
-            if (NativeMethods.LogonUserW(request.TargetUser, ".", authRequest.Password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hSuToken))
+            string username;
+            string domain;
+
+            int backslashIndex = request.TargetUser.IndexOf('\\');
+            if (backslashIndex != -1)
+            {
+                domain = request.TargetUser.Substring(0, backslashIndex);
+                username = request.TargetUser.Substring(backslashIndex + 1);
+            }
+            else
+            {
+                // No domain specified in username, assume local machine or default domain
+                username = request.TargetUser;
+                domain = "."; // Or string.Empty, depending on desired behavior for local accounts
+            }
+
+            Log($"GetSuTokenAsync: Client is not admin. Attempting interactive logon for user: {username}, domain: {domain} , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
+            if (NativeMethods.LogonUserW(username, domain, authRequest.Password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hSuToken))
             {
                 Log($"GetSuTokenAsync: Interactive logon successful for {request.TargetUser}. Token: {hSuToken}");
                 return hSuToken;
