@@ -111,59 +111,64 @@ namespace net.ninebroadcast.engineering.sudo
         private static async Task HandleIoForwarding(SudoServerResponse successData)
         {
             Console.WriteLine("Client: Entering HandleIoForwarding.");
+            NamedPipeClientStream stdinPipe = null; // Declare outside try-block for finally access
             try
             {
-                using (var stdinPipe = new NamedPipeClientStream(".", successData.StdinPipeName!, PipeDirection.Out, PipeOptions.None))
+                stdinPipe = new NamedPipeClientStream(".", successData.StdinPipeName!, PipeDirection.Out, PipeOptions.None);
                 using (var stdoutPipe = new NamedPipeClientStream(".", successData.StdoutPipeName!, PipeDirection.In, PipeOptions.None))
                 using (var stderrPipe = new NamedPipeClientStream(".", successData.StderrPipeName!, PipeDirection.In, PipeOptions.None))
                 {
-                    //Console.WriteLine($"Client: Connecting to stdin pipe '{successData.StdinPipeName}'...");
-                    //Console.WriteLine($"Client: Connecting to stdout pipe '{successData.StdoutPipeName}'...");
-                    //Console.WriteLine($"Client: Connecting to stderr pipe '{successData.StderrPipeName}'...");
                     await Task.WhenAll(
                         stdinPipe.ConnectAsync(5000),
                         stdoutPipe.ConnectAsync(5000),
                         stderrPipe.ConnectAsync(5000)
                     );
-                    //Console.WriteLine("Client: All I/O pipes connected.");
 
-                    //Console.WriteLine("Client: Starting CopyToAsync for stdin, stdout, stderr.");
-
+                    // Use a CancellationTokenSource for stdin, but also prepare to close the pipe
                     var stdinCancellationTokenSource = new CancellationTokenSource();
                     var stdinTask = Console.OpenStandardInput().CopyToAsync(stdinPipe, stdinCancellationTokenSource.Token);
 
                     var stdoutTask = stdoutPipe.CopyToAsync(Console.OpenStandardOutput());
                     var stderrTask = stderrPipe.CopyToAsync(Console.OpenStandardError());
 
-                    //Console.WriteLine("Client: Stdin CopyToAsync started.");
-                    //Console.WriteLine("Client: Stdout CopyToAsync started.");
-                    //Console.WriteLine("Client: Stderr CopyToAsync started.");
-
-                    // Create a task that completes when either stdout or stderr completes
+                    // Wait for either stdout or stderr to complete
                     var outputCompletionTask = Task.WhenAny(stdoutTask, stderrTask);
-
-                    // Wait for output to complete, then cancel stdin task
                     await outputCompletionTask;
-                    //Console.WriteLine("Client: Output stream completed. Cancelling stdin forwarding.");
-                    stdinCancellationTokenSource.Cancel();
 
-                    // Wait for all tasks to complete (stdinTask will complete due to cancellation)
+                    // Output stream completed. Stop forwarding stdin.
+                    // Explicitly close the stdinPipe to unblock CopyToAsync if it's waiting to write.
+                    // This will cause stdinTask to complete (likely with an IOException).
+                    stdinPipe.Dispose(); // This will close the pipe and unblock CopyToAsync
+
+                    // Now wait for all tasks to complete. stdinTask should now complete.
                     try
                     {
                         await Task.WhenAll(stdinTask, stdoutTask, stderrTask);
                     }
                     catch (OperationCanceledException)
                     {
-                        Console.WriteLine("Client: closing connection.");
+                        Console.WriteLine("Client: stdin forwarding cancelled.");
                     }
-                    //Console.WriteLine("Client: All I/O CopyToAsync tasks completed.");
+                    catch (IOException ioEx)
+                    {
+                        // Expected if stdinPipe was disposed while CopyToAsync was active
+                        Console.WriteLine($"Client: stdin pipe closed: {ioEx.Message}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"Client: Error waiting for I/O tasks: {ex.Message}");
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Client I/O Error in HandleIoForwarding: {ex.Message}");
             }
-            //Console.WriteLine("Client: Exiting HandleIoForwarding.");
+            finally
+            {
+                // Ensure stdinPipe is disposed even if an exception occurs earlier
+                stdinPipe?.Dispose();
+            }
         }
 
         private static SudoRequest? ParseArguments(string[] args)
