@@ -63,22 +63,11 @@ namespace net.ninebroadcast.engineering.sudo
                     throw new System.ComponentModel.Win32Exception();
                 }
 
-                // Set the session ID for the new process's primary token if specified
-                if (options.SessionId.HasValue)
-                {
-                    uint sessionId = options.SessionId.Value;
-                    if (!NativeMethods.SetTokenInformation(processInfo.hProcess, NativeMethods.TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(uint)))
-                    {
-                        // Log or handle error if setting session ID fails
-                        System.Diagnostics.Debug.WriteLine($"Failed to set session ID {sessionId} for new process. Error: {Marshal.GetLastWin32Error()}");
-                    }
-                }
+                // Session ID should be set on the userToken before calling CreateProcessAsUser.
+                // This block is no longer needed.
 
                 // Resume the process's primary thread
                 NativeMethods.ResumeThread(processInfo.hThread);
-                {
-                    throw new System.ComponentModel.Win32Exception();
-                }
 
                 // 5. Close the child-side anonymous pipe handles in the parent process.
                 // These handles are now owned by the child process.
