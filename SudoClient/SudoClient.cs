@@ -119,9 +119,9 @@ namespace net.ninebroadcast.engineering.sudo
             NamedPipeClientStream stdinPipe = null; // Declare outside try-block for finally access
             try
             {
-                stdinPipe = new NamedPipeClientStream(".", successData.StdinPipeName!, PipeDirection.Out, PipeOptions.None);
-                using (var stdoutPipe = new NamedPipeClientStream(".", successData.StdoutPipeName!, PipeDirection.In, PipeOptions.None))
-                using (var stderrPipe = new NamedPipeClientStream(".", successData.StderrPipeName!, PipeDirection.In, PipeOptions.None))
+                stdinPipe = new NamedPipeClientStream(".", "Global\\" + successData.StdinPipeName!, PipeDirection.Out, PipeOptions.None);
+                using (var stdoutPipe = new NamedPipeClientStream(".", "Global\\" + successData.StdoutPipeName!, PipeDirection.In, PipeOptions.None))
+                using (var stderrPipe = new NamedPipeClientStream(".", "Global\\" + successData.StderrPipeName!, PipeDirection.In, PipeOptions.None))
                 {
                     await Task.WhenAll(
                         stdinPipe.ConnectAsync(5000),

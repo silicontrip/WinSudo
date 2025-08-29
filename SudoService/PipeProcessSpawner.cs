@@ -60,7 +60,8 @@ namespace net.ninebroadcast.engineering.sudo
                 var creationFlags = NativeMethods.CreationFlags.CREATE_UNICODE_ENVIRONMENT | NativeMethods.CreationFlags.CREATE_NO_WINDOW | NativeMethods.CreationFlags.CREATE_SUSPENDED;
                 if (!NativeMethods.CreateProcessAsUser(userToken, null, command, ref sa, ref sa, true, creationFlags, IntPtr.Zero, options.WorkingDirectory, ref startInfo, out var processInfo))
                 {
-                    throw new System.ComponentModel.Win32Exception();
+                    int lastError = Marshal.GetLastWin32Error();
+                    throw new System.ComponentModel.Win32Exception(lastError, $"CreateProcessAsUser failed with error code {lastError}.");
                 }
 
                 // Session ID should be set on the userToken before calling CreateProcessAsUser.
@@ -227,7 +228,7 @@ namespace net.ninebroadcast.engineering.sudo
                 Marshal.StructureToPtr(sa, pSecurityAttributes, false);
 
                 hPipe = NativeMethods.CreateNamedPipe(
-                    "\\\\.\\pipe\\" + pipeName,
+                    "\\\\.\\pipe\\Global\\" + pipeName,
                     dwOpenMode,
                     dwPipeMode,
                     PIPE_UNLIMITED_INSTANCES,

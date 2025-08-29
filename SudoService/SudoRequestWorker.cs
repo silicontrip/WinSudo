@@ -113,9 +113,12 @@ namespace net.ninebroadcast.engineering.sudo
                 _commandPipe.WaitForPipeDrain();
                 //Console.WriteLine("Server: Pipe drained.");
         
+                await sudoProcess.RunAsync(); // <--- Added this line
+
                 // The SudoProcess object is now responsible for managing its internal pipes and I/O forwarding.
                 // We just need to wait for the helper process to complete its work.
                 await Task.Run(() => sudoProcess.Process.WaitForExit());
+                Log("HandleRequestAsync Task.Run exited.");
             }
             catch (Exception ex)
             {
