@@ -36,31 +36,31 @@ namespace net.ninebroadcast.engineering.sudo
  
             try
             {
-                Log("SudoRequestWorker: HandleRequestAsync entered.");
-                Console.WriteLine("Server: HandleRequestAsync started.");
-                Console.WriteLine("Server: Attempting to get client token...");
+                //Log("SudoRequestWorker: HandleRequestAsync entered.");
+                //Console.WriteLine("Server: HandleRequestAsync started.");
+                //Console.WriteLine("Server: Attempting to get client token...");
                 clientToken = GetClientToken();
-                Console.WriteLine("Server: Client token obtained. Attempting to deserialize request from pipe...");
+                //Console.WriteLine("Server: Client token obtained. Attempting to deserialize request from pipe...");
                 var request = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
-                Console.WriteLine("Server: Request deserialized from pipe.");
+                //Console.WriteLine("Server: Request deserialized from pipe.");
                 if (request == null)
                 {
                     Console.WriteLine("Server: Received null request.");
                     await SendErrorResponse("error", "Received empty or invalid request from client.");
                     return;
                 }
-                Log($"SudoRequestWorker: Received request mode: {request.Mode}");
-                Log("SudoRequestWorker: Evaluating request mode...");
+                //Log($"SudoRequestWorker: Received request mode: {request.Mode}");
+                //Log("SudoRequestWorker: Evaluating request mode...");
         
                 if (request.Mode.Equals("sudo", StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine("Server: mode: sudo.");
+                    //Console.WriteLine("Server: mode: sudo.");
                     userToken = await GetSudoTokenAsync(clientToken, request);
                 }
                 else if (request.Mode.Equals("su", StringComparison.OrdinalIgnoreCase))
                 {
-                    Log("SudoRequestWorker: Mode is 'su'.");
-                    Console.WriteLine("Server: mode: su.");
+                    //Log("SudoRequestWorker: Mode is 'su'.");
+                    //Console.WriteLine("Server: mode: su.");
                     userToken = await GetSuTokenAsync(clientToken, request);
                 }
                 else
@@ -84,11 +84,11 @@ namespace net.ninebroadcast.engineering.sudo
                     StdoutPipeName = sudoProcess.StdoutPipeName,
                     StderrPipeName = sudoProcess.StderrPipeName
                 };
-                Console.WriteLine("Server: Attempting to serialize success response to pipe...");
+                //Console.WriteLine("Server: Attempting to serialize success response to pipe...");
                 await WriteMessageAsync(_commandPipe, successResponse, _jsonOptions);
-                Console.WriteLine("Server: Success response serialized. Waiting for pipe drain...");
+                //Console.WriteLine("Server: Success response serialized. Waiting for pipe drain...");
                 _commandPipe.WaitForPipeDrain();
-                Console.WriteLine("Server: Pipe drained.");
+                //Console.WriteLine("Server: Pipe drained.");
         
                 // The SudoProcess object is now responsible for managing its internal pipes and I/O forwarding.
                 // We just need to wait for the helper process to complete its work.
@@ -111,9 +111,6 @@ namespace net.ninebroadcast.engineering.sudo
             }
         }
 
-
-
-
         private async Task WriteMessageAsync<T>(Stream stream, T message, JsonSerializerOptions options)
         {
             using (var ms = new MemoryStream())
@@ -121,8 +118,8 @@ namespace net.ninebroadcast.engineering.sudo
                 await JsonSerializer.SerializeAsync(ms, message, options);
                 var bytes = ms.ToArray();
 
-                Log($"Server: WriteMessageAsync: Attempting to write message of type {typeof(T).Name}.");
-                Log($"Server: WriteMessageAsync: Message payload length: {bytes.Length} bytes.");
+                //Log($"Server: WriteMessageAsync: Attempting to write message of type {typeof(T).Name}.");
+                //Log($"Server: WriteMessageAsync: Message payload length: {bytes.Length} bytes.");
 
                 // Use BinaryWriter for ALL writes to the stream
                 using (var bw = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
@@ -131,13 +128,13 @@ namespace net.ninebroadcast.engineering.sudo
                     bw.Write(bytes);        // Writes the actual message payload
                     bw.Flush();             // Ensure all buffered data is written to the underlying stream
                 }
-                Log("Server: WriteMessageAsync: Message written and flushed.");
+                //Log("Server: WriteMessageAsync: Message written and flushed.");
             }
         }
 
         private async Task<T?> ReadMessageAsync<T>(Stream stream, JsonSerializerOptions options)
         {
-            Log($"Server: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
+            //Log($"Server: ReadMessageAsync: Attempting to read message of type {typeof(T).Name}.");
             int length;
             byte[] messageBytes;
 
@@ -150,10 +147,10 @@ namespace net.ninebroadcast.engineering.sudo
                 }
                 catch (EndOfStreamException)
                 {
-                    Log("Server: ReadMessageAsync: End of stream reached while reading length.");
+                    //Log("Server: ReadMessageAsync: End of stream reached while reading length.");
                     return default(T); // Pipe closed prematurely
                 }
-                Log($"Server: ReadMessageAsync: Message length is {length} bytes.");
+                //Log($"Server: ReadMessageAsync: Message length is {length} bytes.");
                 if (length <= 0) throw new IOException("Invalid message length.");
 
                 messageBytes = br.ReadBytes(length); // Reads the actual message payload
@@ -165,7 +162,7 @@ namespace net.ninebroadcast.engineering.sudo
 
             using (var ms = new MemoryStream(messageBytes))
             {
-                Log("Server: ReadMessageAsync: Deserializing message.");
+                //Log("Server: ReadMessageAsync: Deserializing message.");
                 return await JsonSerializer.DeserializeAsync<T>(ms, options);
             }
         }
@@ -246,18 +243,20 @@ namespace net.ninebroadcast.engineering.sudo
             IntPtr finalToken = authenticatedToken;
             if (authenticatedToken != IntPtr.Zero)
             {
-                Log($"GetSudoTokenAsync: Attempting to get elevated token for authenticatedToken: {authenticatedToken}");
+                //Log($"GetSudoTokenAsync: Attempting to get elevated token for authenticatedToken: {authenticatedToken}");
                 IntPtr elevatedToken = GetElevatedToken(authenticatedToken);
                 if (elevatedToken != IntPtr.Zero)
                 {
-                    Log($"GetSudoTokenAsync: Successfully obtained elevated token: {elevatedToken}. Closing original token: {authenticatedToken}");
+                    //Log($"GetSudoTokenAsync: Successfully obtained elevated token: {elevatedToken}. Closing original token: {authenticatedToken}");
                     NativeMethods.CloseHandle(authenticatedToken); // Close the original filtered token
                     finalToken = elevatedToken;
                 }
+                /*
                 else
                 {
                     Log($"GetSudoTokenAsync: Failed to obtain elevated token. Using original authenticatedToken: {authenticatedToken}");
                 }
+                */
             }
 
             return finalToken;
@@ -286,7 +285,7 @@ namespace net.ninebroadcast.engineering.sudo
             }
             catch (Exception ex)
             {
-                Log($"ERROR: GetSuTokenAsync: Failed to get client user SID: {ex.Message}");
+                //Log($"ERROR: GetSuTokenAsync: Failed to get client user SID: {ex.Message}");
                 await SendErrorResponse("error", $"Failed to get client user SID: {ex.Message}");
                 return IntPtr.Zero;
             }
@@ -309,14 +308,14 @@ namespace net.ninebroadcast.engineering.sudo
                 // Second call to get the actual SID
                 if (!NativeMethods.LookupAccountName(null, request.TargetUser, targetUserSid, ref sidSize, domainName, ref domainSize, out sidUse))
                 {
-                    Log($"ERROR: GetSuTokenAsync: LookupAccountName for {request.TargetUser} failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
+                    //Log($"ERROR: GetSuTokenAsync: LookupAccountName for {request.TargetUser} failed. LastWin32Error: {Marshal.GetLastWin32Error()}");
                     await SendErrorResponse("error", $"Failed to resolve target user: {request.TargetUser}. Win32 Error: {Marshal.GetLastWin32Error()}");
                     return IntPtr.Zero;
                 }
             }
             catch (Exception ex)
             {
-                Log($"ERROR: GetSuTokenAsync: Failed to get target user SID: {ex.Message}");
+                //Log($"ERROR: GetSuTokenAsync: Failed to get target user SID: {ex.Message}");
                 await SendErrorResponse("error", $"Failed to get target user SID: {ex.Message}");
                 return IntPtr.Zero;
             }
@@ -327,12 +326,13 @@ namespace net.ninebroadcast.engineering.sudo
 
             if (clientIsAdmin && isSameUser)
             {
-                Log($"GetSuTokenAsync: Client is admin and target user is same. Returning client token.");
+                //Log($"GetSuTokenAsync: Client is admin and target user is same. Returning client token.");
                 // If the client is an admin and wants to su to themselves, return their token.
                 // We can return the original clientToken or its elevated version if needed.
                 // For now, just return the clientToken.
                 return clientToken;
             }
+            /*
             else if (clientIsAdmin && !isSameUser)
             {
                 // If client is admin but wants to su to a different user,
@@ -344,16 +344,16 @@ namespace net.ninebroadcast.engineering.sudo
                 // Client is not admin, proceed with password authentication.
                 Log($"GetSuTokenAsync: Client is not admin. Proceeding with password authentication for {request.TargetUser}.");
             }
-
+            */
             // Proceed with password authentication for target user
             var challengeResponse = new SudoServerResponse { Status = "authentication_required" };
-            Log("GetSuTokenAsync: Sending authentication challenge to client.");
+            //Log("GetSuTokenAsync: Sending authentication challenge to client.");
             await WriteMessageAsync(_commandPipe, challengeResponse, _jsonOptions);
-            Log("GetSuTokenAsync: Authentication challenge sent. Waiting for pipe drain.");
+            //Log("GetSuTokenAsync: Authentication challenge sent. Waiting for pipe drain.");
             _commandPipe.WaitForPipeDrain();
-            Log("GetSuTokenAsync: Pipe drained. Attempting to deserialize authentication request.");
+            //Log("GetSuTokenAsync: Pipe drained. Attempting to deserialize authentication request.");
             var authRequest = await ReadMessageAsync<SudoRequest>(_commandPipe, _jsonOptions);
-            Log("GetSuTokenAsync: Authentication request deserialized.");
+            //Log("GetSuTokenAsync: Authentication request deserialized.");
             if (authRequest == null)
             {
                 await SendErrorResponse("error", "Received empty or invalid authentication request.");
@@ -370,7 +370,7 @@ namespace net.ninebroadcast.engineering.sudo
             string username;
             string domain;
 
-            int backslashIndex = request.TargetUser.IndexOf('\');
+            int backslashIndex = request.TargetUser.IndexOf('\\');
             if (backslashIndex != -1)
             {
                 domain = request.TargetUser.Substring(0, backslashIndex);
@@ -383,14 +383,14 @@ namespace net.ninebroadcast.engineering.sudo
                 domain = "."; // Or string.Empty, depending on desired behavior for local accounts
             }
 
-            Log($"GetSuTokenAsync: Attempting interactive logon for user: {username}, domain: {domain} , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
+            //Log($"GetSuTokenAsync: Attempting interactive logon for user: {username}, domain: {domain} , LogonType: {NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE}");
             if (NativeMethods.LogonUserW(username, domain, authRequest.Password, NativeMethods.LogonType.LOGON32_LOGON_INTERACTIVE, NativeMethods.LogonProvider.LOGON32_PROVIDER_DEFAULT, out IntPtr hSuToken))
             {
-                Log($"GetSuTokenAsync: Interactive logon successful for {request.TargetUser}. Token: {hSuToken}");
+                //Log($"GetSuTokenAsync: Interactive logon successful for {request.TargetUser}. Token: {hSuToken}");
                 return hSuToken;
             }
             int lastErrorAuth = Marshal.GetLastWin32Error();
-            Log($"ERROR: GetSuTokenAsync: Interactive logon failed for {request.TargetUser}. LastWin32Error: {lastErrorAuth}");
+            // Log($"ERROR: GetSuTokenAsync: Interactive logon failed for {request.TargetUser}. LastWin32Error: {lastErrorAuth}");
             await SendErrorResponse("authentication_failure", $"Invalid username or password. Win32 Error: {lastErrorAuth}");
             return IntPtr.Zero;
         }
